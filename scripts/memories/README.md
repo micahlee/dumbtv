@@ -25,8 +25,11 @@ The default cache covers today and seven upcoming days, with at most 240 photos
 and 128 MiB per active generation. The prior generation is retained for safe
 transition. Every file is copied before an atomic photo-index replacement; a failed
 copy, unavailable OneDrive folder, or empty refresh preserves the previous TV index.
-The refresh never wakes a sleeping TV. An hourly launch agent can retry while the
-TV is on. The TV plays its own cache even if the Mac is unavailable.
+The refresh never wakes a sleeping TV. The native **TV Memories** login-session
+app owns a loopback-only ADB server on port 5038 and an hourly refresh, with quiet
+retries while the TV is unavailable. Its app identity provides macOS's normal
+Local Network consent flow; no privacy databases or protections are changed.
+The TV plays its own cache even if the Mac is unavailable.
 
 Use a dedicated private JSON configuration (mode 0600) with these keys:
 
@@ -37,13 +40,16 @@ Use a dedicated private JSON configuration (mode 0600) with these keys:
   "state_dir": "/absolute/path/to/private/cache",
   "image_helper": "/absolute/path/to/memory-image",
   "adb": "/absolute/path/to/adb",
+  "adb_port": 5038,
   "device": "TV_HOST:5555"
 }
 ```
 
 Do not commit this configuration, photo indexes, photos, ADB keys, or job logs.
 The hostname check prevents accidentally moving the job to a different Mac.
-Compile the helper with `swiftc scripts/memories/image.swift -o memory-image`.
+Build installable Mac artifacts with `scripts/memories/build-mac.sh OUTPUT`.
+The script fetches and enforces clean `origin/main` before building. The app's
+menu provides refresh status, **Refresh now**, and **Quit until next login**.
 Run `python3 scripts/memories/sync.py --config CONFIG --dry-run` first;
 `--prepare-only` creates the Mac cache without contacting the TV.
 

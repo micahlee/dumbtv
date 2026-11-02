@@ -14,6 +14,7 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
     private var sync: Process?
     private var connection: NWConnection?
     private var timer: Timer?
+    private var retryTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -42,6 +43,7 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
         guard sync == nil, connection == nil,
               let device = config["device"] as? String,
               let host = device.split(separator: ":").first else { return }
+        retryTimer?.invalidate(); retryTimer = nil
         status.title = "Checking the TV…"
         // This ordinary Network-framework connection requests Local Network consent
         // for this app bundle. It is not a proxy: ADB performs all subsequent transfers.
@@ -54,18 +56,32 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
                 check?.stateUpdateHandler = nil; check?.cancel()
                 self.connection = nil
                 self.startServerAndRefresh()
-            case .waiting, .failed:
+            case .waiting:
+                self.status.title = "Waiting for TV or Local Network permission…"
+            case .failed:
+                let denied = check?.currentPath?.unsatisfiedReason == .localNetworkDenied
                 check?.stateUpdateHandler = nil; check?.cancel()
                 self.connection = nil
                 self.status.title = "TV unavailable or network access needed"
+                if !denied { self.scheduleRetry() }
             default: break
             }
         }
         check.start(queue: .main)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak check] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self, weak check] in
             guard let self = self, self.connection === check else { return }
+            let denied = check?.currentPath?.unsatisfiedReason == .localNetworkDenied
             check?.stateUpdateHandler = nil; check?.cancel(); self.connection = nil
-            self.status.title = "TV asleep; cached photos remain available"
+            self.status.title = denied ? "Allow Local Network, then choose Refresh now"
+                : "TV asleep; cached photos remain available"
+            if !denied { self.scheduleRetry() }
+        }
+    }
+
+    private func scheduleRetry() {
+        retryTimer?.invalidate()
+        retryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: false) { [weak self] _ in
+            self?.refreshNow()
         }
     }
 
@@ -109,7 +125,9 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.sync = nil
-                let url = self.root.appendingPathComponent("cache/status.json")
+                let directory = self.config["state_dir"] as? String
+                    ?? self.root.appendingPathComponent("cache").path
+                let url = URL(fileURLWithPath: directory).appendingPathComponent("status.json")
                 if child.terminationStatus == 0,
                    let data = try? Data(contentsOf: url),
                    let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -126,7 +144,7 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
 
     @objc private func quitOwner() { NSApplication.shared.terminate(nil) }
     func applicationWillTerminate(_ notification: Notification) {
-        connection?.cancel(); timer?.invalidate()
+        connection?.cancel(); timer?.invalidate(); retryTimer?.invalidate()
         if sync?.isRunning == true { sync?.terminate() }
         if server?.isRunning == true { server?.terminate() }
     }
