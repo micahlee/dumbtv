@@ -64,11 +64,11 @@ def candidates(sources, today, days_ahead=7, per_day=40, limit=240):
 
 
 class ADB:
-    def __init__(self, executable, device):
-        self.executable, self.device = executable, device
+    def __init__(self, executable, device, port=5038):
+        self.arguments, self.device = [executable, "-P", str(port)], device
 
     def call(self, *args, timeout=30):
-        result = subprocess.run([self.executable, "-s", self.device, *args],
+        result = subprocess.run(self.arguments + ["-s", self.device, *args],
                                 capture_output=True, text=True, timeout=timeout)
         if result.returncode:
             if "unauthorized" in result.stderr.lower():
@@ -83,7 +83,7 @@ class ADB:
                 pass
         except OSError:
             return False  # Never wake a sleeping TV merely to refresh its photos.
-        result = subprocess.run([self.executable, "connect", self.device],
+        result = subprocess.run(self.arguments + ["connect", self.device],
                                 capture_output=True, text=True, timeout=10)
         if result.returncode:
             raise RuntimeError("Could not connect to the TV")
@@ -184,7 +184,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         if prepare_only:
             status["status"] = "prepared"
         else:
-            adb = ADB(config["adb"], config["device"])
+            adb = ADB(config["adb"], config["device"], config.get("adb_port", 5038))
             if not adb.connect():
                 status["status"] = "tv_offline"
             else:
