@@ -11,7 +11,14 @@ public final class MemoryPreview extends Activity {
         super.onCreate(state);
         Config cfg = Config.get(this); cfg.refresh();
         if (!"on".equals(cfg.get("memories.enabled", "off"))) { finish(); return; }
-        frame = new MemoryFrame(this); setContentView(frame);
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (!isFinishing() && frame == null) { frame = new MemoryFrame(this); setContentView(frame); }
+    }
+    @Override protected void onPause() {
+        if (frame != null) { frame.stop(); frame = null; }
+        super.onPause();
     }
     @Override public boolean onKeyDown(int code, KeyEvent event) {
         if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_DPAD_CENTER
