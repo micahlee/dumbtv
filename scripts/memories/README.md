@@ -31,6 +31,22 @@ retries while the TV is unavailable. Its app identity provides macOS's normal
 Local Network consent flow; no privacy databases or protections are changed.
 The TV plays its own cache even if the Mac is unavailable.
 
+### Recent photos behind the app chooser
+
+Set `recent_days` to `7` in the Mac configuration to also prepare photos taken
+today or during the preceding six days. This uses the actual recent date, rather
+than the anniversary filter used by the idle slideshow. EXIF capture dates
+override dated filenames. The initial version skips photos without dated filenames.
+Up to 30 recent pictures (64 MiB) are prepared, with a separate two-minute budget.
+They are fitted onto a 1920×1080 black canvas so portraits remain uncropped.
+Only generated `recent_*.jpg` files in the launcher's own `files/wallpapers/`
+directory are managed; user-added wallpapers are preserved.
+
+Choose `background=image`, `rotate=minute`, and, for readable tiles, `dim=60` in
+`home.conf`. The launcher changes the wallpaper every minute while home is visible.
+The last collection remains available if a refresh fails or finds no recent photos.
+Disable rotation or choose a solid background to undo it.
+
 Use a dedicated private JSON configuration (mode 0600) with these keys:
 
 ```json

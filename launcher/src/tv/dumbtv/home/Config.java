@@ -92,8 +92,8 @@ final class Config {
             new String[] {"0%", "20%", "40%", "60%", "80%"});
 
     static final Choice ROTATE = new Choice("rotate", "Wallpaper rotation", "off",
-            new String[] {"off", "visit", "hourly", "daily", "daytime"},
-            new String[] {"Off", "Every return home", "Every hour", "Every day", "By time of day"});
+            new String[] {"off", "visit", "minute", "hourly", "daily", "daytime"},
+            new String[] {"Off", "Every return home", "Every minute", "Every hour", "Every day", "By time of day"});
 
     /**
      * For a TV children use: hides Options and Settings and turns off the tile menu, so the home
@@ -397,6 +397,7 @@ final class Config {
             }
             switch (mode) {
                 case "visit": step = visits; break;
+                case "minute": step = now / 60_000L; break;
                 case "hourly": step = now / 3_600_000L; break;
                 case "daily": step = (now + TimeZone.getDefault().getOffset(now)) / 86_400_000L; break;
                 default: step = 0;

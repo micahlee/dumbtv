@@ -17,6 +17,8 @@ REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/memories"
 NAME = re.compile(r"(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}\.jpg\Z")
 DATE = re.compile(r"((?:19|20)\d{2})[-_]?([01]\d)[-_]?([0-3]\d)")
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
+WALLPAPER = re.compile(r"recent_[0-9a-f]{16}\.jpg\Z")
+WALLPAPER_REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/wallpapers"
 
 
 def filename_date(name):
@@ -89,6 +91,99 @@ class ADB:
             raise RuntimeError("Could not connect to the TV")
         self.call("get-state")
         return True
+
+
+def recent_candidates(sources, today, days=7, limit=30):
+    selected = []
+    for root in sources:
+        root = Path(root).expanduser()
+        if not root.is_dir():
+            raise RuntimeError("OneDrive photo folder is unavailable")
+        errors = []
+        for directory, dirs, files in os.walk(root, onerror=errors.append):
+            dirs[:] = [x for x in dirs if not x.startswith(".")]
+            for name in files:
+                if Path(name).suffix.lower() not in EXTENSIONS:
+                    continue
+                taken = filename_date(name)
+                if taken is not None and 0 <= (today - taken).days < days:
+                    selected.append((taken, Path(directory) / name))
+        if errors:
+            raise RuntimeError("OneDrive photo enumeration was incomplete")
+    return sorted(selected, key=lambda p: (p[0], str(p[1])), reverse=True)[:limit]
+
+
+def prepare_wallpapers(config, state, today):
+    selected = recent_candidates(config["sources"], today, config.get("recent_days", 7),
+                                 config.get("recent_limit", 30))
+    folder = state / "wallpapers"
+    folder.mkdir(exist_ok=True)
+    metadata_file = state / "wallpapers.json"
+    metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
+    frames, used = [], 0
+    deadline = time.monotonic() + config.get("recent_budget_seconds", 120)
+    for named_date, source in selected:
+        if time.monotonic() > deadline:
+            break
+        info = source.stat()
+        key = hashlib.sha256((str(source) + ":" + str(info.st_size) + ":"
+                              + str(info.st_mtime_ns)).encode()).hexdigest()[:16]
+        name = "recent_" + key + ".jpg"
+        target = folder / name
+        if not target.is_file():
+            temp = folder / (name + ".part")
+            try:
+                result = subprocess.run([config["image_helper"], str(source), str(temp), "--wallpaper"],
+                                        capture_output=True, text=True, timeout=60)
+                if result.returncode:
+                    continue
+                values = json.loads(result.stdout)
+                taken = dt.date.fromisoformat(values["taken"]) if values.get("taken") else named_date
+                if not 0 <= (today - taken).days < config.get("recent_days", 7):
+                    continue
+                temp.replace(target)
+                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename"}
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                continue
+            finally:
+                temp.unlink(missing_ok=True)
+        taken = dt.date.fromisoformat(metadata.get(name, {}).get("taken", str(named_date)))
+        if not 0 <= (today - taken).days < config.get("recent_days", 7):
+            continue
+        if used + target.stat().st_size > config.get("recent_max_bytes", 67108864):
+            break
+        used += target.stat().st_size
+        frames.append(target)
+    if frames:
+        # Bound the local rolling cache too, while preserving it on an empty refresh.
+        current = {p.name for p in frames}
+        for old in folder.iterdir():
+            if WALLPAPER.fullmatch(old.name) and old.name not in current:
+                old.unlink()
+        metadata = {name: record for name, record in metadata.items() if name in current}
+    temp = state / "wallpapers.json.next"
+    temp.write_text(json.dumps(metadata, sort_keys=True))
+    temp.replace(metadata_file)
+    return frames
+
+
+def publish_wallpapers(adb, frames):
+    if not frames:
+        return  # Keep the last collection if there are no new eligible pictures.
+    if any(not WALLPAPER.fullmatch(p.name) for p in frames):
+        raise RuntimeError("Invalid wallpaper filename")
+    adb.call("shell", "mkdir -p " + WALLPAPER_REMOTE)
+    listing = adb.call("shell", "ls -1 " + WALLPAPER_REMOTE).splitlines()
+    existing = set(listing)
+    for image in frames:
+        if image.name not in existing:
+            adb.call("push", str(image), WALLPAPER_REMOTE + "/" + image.name + ".part", timeout=60)
+            adb.call("shell", "mv " + WALLPAPER_REMOTE + "/" + image.name + ".part "
+                     + WALLPAPER_REMOTE + "/" + image.name)
+    # Only our generated pictures are owned by this job. Preserve user-added wallpapers.
+    obsolete = [n for n in listing if WALLPAPER.fullmatch(n) and n not in {p.name for p in frames}]
+    if obsolete:
+        adb.call("shell", "rm -f " + " ".join(WALLPAPER_REMOTE + "/" + n for n in obsolete))
 
 
 def publish(adb, frames, index_path):
@@ -181,6 +276,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             raise RuntimeError("No eligible photos were prepared; preserving the TV cache")
         status = {"date": str(today), "photos": len(frames), "bytes": used,
                   "conversionFailures": failures, "undatedSkipped": undated}
+        wallpapers = prepare_wallpapers(config, state, today) if config.get("recent_days", 0) else []
+        status["wallpapers"] = len(wallpapers)
         if prepare_only:
             status["status"] = "prepared"
         else:
@@ -189,6 +286,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                 status["status"] = "tv_offline"
             else:
                 retain = publish(adb, frames, state / "index.txt")
+                publish_wallpapers(adb, wallpapers)
                 for old in cache.iterdir():
                     if NAME.fullmatch(old.name) and old.name not in retain:
                         old.unlink()
