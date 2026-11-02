@@ -226,6 +226,7 @@ public final class Home extends Activity {
         super.onResume();
         resumed = true;
         cfg.refresh();
+        Guard.resumed(this);
         cfg.visited();
         if (cfg.version() != applied) apply();
         else background();
@@ -242,10 +243,27 @@ public final class Home extends Activity {
         Guard.shown(this);
     }
 
+    boolean readyForReturn() { return resumed && hasWindowFocus(); }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) {
+            Guard.focused(this);
+            View decor = getWindow().getDecorView();
+            decor.postOnAnimation(() -> decor.postOnAnimation(() -> Guard.shown(this)));
+        }
+    }
+
+    @Override public void startActivity(Intent intent) {
+        Guard.departing();
+        super.startActivity(intent);
+    }
+
     @Override
     protected void onPause() {
         super.onPause();
         resumed = false;
+        Guard.homePaused();
         stopColorAnimation();
         targetColor = 0;
         unregisterReceiver(time);
