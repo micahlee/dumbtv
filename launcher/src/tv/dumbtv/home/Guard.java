@@ -2,6 +2,7 @@ package tv.dumbtv.home;
 
 import android.accessibilityservice.AccessibilityService;
 import android.app.ActivityOptions;
+import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
@@ -16,10 +17,12 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.os.PowerManager;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import java.lang.ref.WeakReference;
 
 /**
  * Fire OS keeps HOME bound to Amazon's protected launcher and handles the HOME key before any
@@ -54,10 +57,12 @@ public final class Guard extends AccessibilityService {
 
     private static volatile boolean paused;
     private static Guard running;
+    private static WeakReference<Home> currentHome = new WeakReference<>(null);
 
     private View cover;
     private long lastLaunch;
     private boolean homeRequested;
+    private long lastRequest, lastFocus, verifyUntil;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable uncover = this::uncover;
     private final Runnable launch = () -> {
@@ -69,6 +74,7 @@ public final class Guard extends AccessibilityService {
             launchWhenCovered();
         }
     };
+    private final Runnable verify = this::verifyReturn;
     private final BroadcastReceiver screenOn = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
@@ -88,6 +94,7 @@ public final class Guard extends AccessibilityService {
     }
 
     private static void home(Context c, long delayMs) {
+        if (delayMs == 0 && running != null && running.moveOwnHomeTask()) return;
         AlarmManager alarms = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
         alarms.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delayMs,
                 launch(c));
@@ -102,6 +109,59 @@ public final class Guard extends AccessibilityService {
     /** Called once our home window is on screen. */
     static void shown(Home activity) {
         if (running != null && activity.hasWindowFocus()) running.uncover();
+    }
+
+    static void resumed(Home activity) { currentHome = new WeakReference<>(activity); }
+
+    static void focused(Home activity) {
+        currentHome = new WeakReference<>(activity);
+        if (running != null && running.taskMode()) {
+            running.homeRequested = true;
+            running.lastFocus = SystemClock.uptimeMillis();
+            paused = false;
+        }
+    }
+
+    static void homePaused() {
+        if (running == null || !running.taskMode() || !running.homeRequested || paused) return;
+        long now = SystemClock.uptimeMillis();
+        // Only verify a recent return, never fight a screensaver starting after idle.
+        if (now - Math.max(running.lastRequest, running.lastFocus) <= 2500) running.verifySoon(now);
+    }
+
+    static void departing() { if (running != null) running.leaveHome(false); }
+
+    private boolean taskMode() { return "on".equals(Config.get(this).get("home.task_mode", "off")); }
+
+    private boolean moveOwnHomeTask() {
+        if (!taskMode() || paused || !homeRequested) return false;
+        ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        if (manager == null) return false;
+        try {
+            for (ActivityManager.AppTask task : manager.getAppTasks()) {
+                ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                if (info.topActivity != null && Home.class.getName().equals(info.topActivity.getClassName())) {
+                    task.moveToFront();
+                    return true;
+                }
+            }
+        } catch (RuntimeException ignored) { /* Keep the alarm path as fallback. */ }
+        return false;
+    }
+
+    private void verifySoon(long now) {
+        verifyUntil = now + 2500;
+        handler.removeCallbacks(verify);
+        handler.postDelayed(verify, 150);
+    }
+
+    private void verifyReturn() {
+        if (!taskMode() || paused || !homeRequested || SystemClock.uptimeMillis() > verifyUntil) return;
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (power != null && !power.isInteractive()) return;
+        Home activity = currentHome.get();
+        if (activity == null || !activity.readyForReturn()) launchWhenCovered();
+        handler.postDelayed(verify, 150);
     }
 
     private static PendingIntent launch(Context c) {
@@ -146,6 +206,7 @@ public final class Guard extends AccessibilityService {
         handler.removeCallbacks(uncover);
         handler.removeCallbacks(launch);
         handler.removeCallbacks(retry);
+        handler.removeCallbacks(verify);
         try {
             unregisterReceiver(screenOn);
         } catch (IllegalArgumentException ignored) {
@@ -159,13 +220,21 @@ public final class Guard extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent e) {
         if (e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
         CharSequence pkg = e.getPackageName(), cls = e.getClassName();
-        if (pkg == null || "com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
+        if (pkg == null) return;
+        if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) {
+            if (taskMode() && cls != null) {
+                try {
+                    getPackageManager().getActivityInfo(new ComponentName(pkg.toString(), cls.toString()), 0);
+                    leaveHome(false);
+                } catch (PackageManager.NameNotFoundException ignored) { }
+            }
+            return;
+        }
         if (getPackageName().contentEquals(pkg)) {
             if (cls != null && Home.class.getName().contentEquals(cls)) {
                 // Our activity can report a late window event after a newer HOME press.
                 // Keep that return pending; a resume/window event does not prove it won.
-                paused = false;
-                homeRequested = true;
+                if (!taskMode()) { paused = false; homeRequested = true; }
                 lastLaunch = 0;
             } else if (cls != null && cls.toString().startsWith(getPackageName() + ".")) {
                 leaveHome(true); // Options, inputs or another deliberate in-app screen.
@@ -188,6 +257,8 @@ public final class Guard extends AccessibilityService {
         homeRequested = true;
         if (paused) return;
         long now = SystemClock.uptimeMillis();
+        lastRequest = now;
+        if (taskMode()) verifySoon(now);
         handler.removeCallbacks(retry);
         if (now - lastLaunch < REPEAT_MS) {
             // A HOME during the first return can overtake its activity alarm. Keep one
@@ -210,6 +281,7 @@ public final class Guard extends AccessibilityService {
     private void cancelReturn() {
         handler.removeCallbacks(launch);
         handler.removeCallbacks(retry);
+        handler.removeCallbacks(verify);
         arrived(this);
         uncover();
     }
