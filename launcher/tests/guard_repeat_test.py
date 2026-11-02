@@ -20,7 +20,12 @@ stubs={
 'android/graphics/PixelFormat.java':'package android.graphics; public class PixelFormat { public static final int OPAQUE=1; }',
 'android/os/Build.java':'package android.os; public class Build { public static class VERSION { public static final int SDK_INT=28; } }',
 'android/os/Looper.java':'package android.os; public class Looper { public static Looper getMainLooper(){return null;} }',
-'android/os/Handler.java':'package android.os; public class Handler { public Handler(Looper l){} public void removeCallbacks(Runnable r){} public void postDelayed(Runnable r,long t){} }',
+'android/os/Handler.java':'''package android.os; public class Handler {
+ private static final java.util.Map<Runnable,Long> tasks=new java.util.HashMap<>();
+ public Handler(Looper l){} public void removeCallbacks(Runnable r){tasks.remove(r);}
+ public void postDelayed(Runnable r,long t){tasks.put(r,SystemClock.now+t);}
+ public static void dispatch(long now){SystemClock.now=now; for(java.util.Map.Entry<Runnable,Long> e:new java.util.HashMap<>(tasks).entrySet()){if(e.getValue()<=now){tasks.remove(e.getKey());e.getKey().run();}}}
+ }''',
 'android/os/SystemClock.java':'package android.os; public class SystemClock { public static long now=10000; public static long uptimeMillis(){return now;} public static long elapsedRealtime(){return now;} }',
 'android/view/View.java':'''package android.view; public class View { public static final int GONE=8,VISIBLE=0; public View(android.content.Context c){} public void setVisibility(int v){} public int getVisibility(){return GONE;} public ViewTreeObserver getViewTreeObserver(){return new ViewTreeObserver();} public void setBackgroundColor(int c){} }''',
 'android/view/ViewTreeObserver.java':'package android.view; public class ViewTreeObserver { public interface OnPreDrawListener { boolean onPreDraw(); } public void addOnPreDrawListener(OnPreDrawListener l){} public void removeOnPreDrawListener(OnPreDrawListener l){} }',
@@ -48,7 +53,18 @@ public class GuardRepeatTest {
  Guard.pause(); event(g,AMAZON,HOME,10800);count(3,"intentional Amazon home pause respected");
  event(g,"tv.dumbtv.home","tv.dumbtv.home.Home",10900);
  event(g,AMAZON,HOME,11000);count(4,"leaving intentional Amazon view resumes takeover");
- System.out.println("GuardRepeatTest passed: double HOME, duplicate events, app return, Settings, explicit pause");
+ event(g,AMAZON,HOME,11050); count(4,"second HOME while first return is pending is coalesced");
+ Guard.arrived(g); // A late onResume cancels the activity alarm, as in the startup race.
+ android.os.Handler.dispatch(12000); count(5,"suppressed HOME retried after throttle expires");
+ event(g,AMAZON,HOME,12100); event(g,"com.espn.gtv","StartupActivity",12200);
+ android.os.Handler.dispatch(13000); count(5,"leaving for an app cancels delayed retry");
+ event(g,AMAZON,HOME,14000); count(6,"new visit redirects");
+ event(g,AMAZON,HOME,14100); event(g,AMAZON,"com.amazon.tv.launcher.ui.MainSettingsActivity",14200);
+ android.os.Handler.dispatch(15000); count(6,"retry does not leave Settings");
+ event(g,AMAZON,HOME,16000); count(7,"later visit redirects");
+ event(g,AMAZON,HOME,16100); Guard.pause();
+ android.os.Handler.dispatch(17000); count(7,"retry respects explicit pause");
+ System.out.println("GuardRepeatTest passed: double HOME, queued retry, cancellation, Settings, explicit pause");
  }
 }'''
 }
@@ -66,5 +82,5 @@ for label,source in cases:
   subprocess.run([str(jdk/'javac'),'-d',str(d/'classes')]+[str(p) for p in d.rglob('*.java')],check=True)
   r=subprocess.run([str(jdk/'java'),'-cp',str(d/'classes'),'tv.dumbtv.home.GuardRepeatTest'],capture_output=True,text=True)
   print(label+': '+r.stdout+r.stderr,flush=True)
-  if label=='original': assert r.returncode!=0 and 'second HOME after chooser' in r.stderr
+  if label=='original': assert r.returncode!=0 and ('second HOME after chooser' in r.stderr or 'suppressed HOME retried' in r.stderr)
   else: assert r.returncode==0

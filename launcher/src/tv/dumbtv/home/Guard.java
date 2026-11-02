@@ -53,12 +53,18 @@ public final class Guard extends AccessibilityService {
     private static volatile boolean paused;
     private static Guard running;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable uncover = this::uncover;
-    private final Runnable launch = () -> home(this);
     private View cover;
     private long lastLaunch;
     private boolean onAmazonHome;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable uncover = this::uncover;
+    private final Runnable launch = () -> home(this);
+    private final Runnable retry = () -> {
+        if (!paused && onAmazonHome) {
+            lastLaunch = SystemClock.uptimeMillis();
+            launchWhenCovered();
+        }
+    };
     private final BroadcastReceiver screenOn = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
@@ -134,6 +140,7 @@ public final class Guard extends AccessibilityService {
     public void onDestroy() {
         handler.removeCallbacks(uncover);
         handler.removeCallbacks(launch);
+        handler.removeCallbacks(retry);
         try {
             unregisterReceiver(screenOn);
         } catch (IllegalArgumentException ignored) {
@@ -152,6 +159,7 @@ public final class Guard extends AccessibilityService {
             if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
             onAmazonHome = false;
             paused = false;
+            handler.removeCallbacks(retry);
             // A later return to Amazon's home is a new visit, even within REPEAT_MS.
             // Otherwise a quick second HOME is dropped after our first launch completed.
             lastLaunch = 0;
@@ -159,9 +167,19 @@ public final class Guard extends AccessibilityService {
             return;
         }
         onAmazonHome = cls != null && AMAZON_HOME.contentEquals(cls);
-        if (paused || !onAmazonHome) return;
+        if (paused || !onAmazonHome) {
+            handler.removeCallbacks(retry);
+            return;
+        }
         long now = SystemClock.uptimeMillis();
-        if (now - lastLaunch < REPEAT_MS) return;
+        handler.removeCallbacks(retry);
+        if (now - lastLaunch < REPEAT_MS) {
+            // A HOME during the first return can overtake its activity alarm. Keep one
+            // retry rather than dropping the event and stranding the user on Amazon Home.
+            cover();
+            handler.postDelayed(retry, REPEAT_MS - (now - lastLaunch));
+            return;
+        }
         lastLaunch = now;
         launchWhenCovered();
     }
