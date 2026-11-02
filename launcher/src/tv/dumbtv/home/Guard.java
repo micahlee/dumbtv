@@ -6,6 +6,8 @@ import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.pm.PackageManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -55,13 +57,14 @@ public final class Guard extends AccessibilityService {
 
     private View cover;
     private long lastLaunch;
-    private boolean onAmazonHome;
+    private boolean homeRequested;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable uncover = this::uncover;
-    private final Runnable launch = () -> home(this);
+    private final Runnable launch = () -> {
+        if (!paused && homeRequested) home(this);
+    };
     private final Runnable retry = () -> {
-        trace("retry paused=" + paused + " home=" + onAmazonHome);
-        if (!paused && onAmazonHome) {
+        if (!paused && homeRequested) {
             lastLaunch = SystemClock.uptimeMillis();
             launchWhenCovered();
         }
@@ -69,7 +72,7 @@ public final class Guard extends AccessibilityService {
     private final BroadcastReceiver screenOn = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (!paused && onAmazonHome) launchWhenCovered();
+            if (!paused && homeRequested) launchWhenCovered();
         }
     };
 
@@ -77,6 +80,7 @@ public final class Guard extends AccessibilityService {
     static void pause() {
         paused = true;
         Keeper.pause();
+        if (running != null) running.cancelReturn();
     }
 
     static void home(Context c) {
@@ -84,7 +88,6 @@ public final class Guard extends AccessibilityService {
     }
 
     private static void home(Context c, long delayMs) {
-        if (running != null) running.trace("alarm delay=" + delayMs);
         AlarmManager alarms = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
         alarms.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delayMs,
                 launch(c));
@@ -92,15 +95,13 @@ public final class Guard extends AccessibilityService {
 
     /** Drops a queued launch, so it cannot pull the user back after they opened an app. */
     static void arrived(Context c) {
-        if (running != null) running.trace("arrived cancel " + c.getClass().getSimpleName());
         AlarmManager alarms = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
         alarms.cancel(launch(c));
     }
 
     /** Called once our home window is on screen. */
-    static void shown() {
-        if (running != null) running.trace("shown");
-        if (running != null) running.uncover();
+    static void shown(Home activity) {
+        if (running != null && activity.hasWindowFocus()) running.uncover();
     }
 
     private static PendingIntent launch(Context c) {
@@ -158,26 +159,34 @@ public final class Guard extends AccessibilityService {
     public void onAccessibilityEvent(AccessibilityEvent e) {
         if (e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
         CharSequence pkg = e.getPackageName(), cls = e.getClassName();
-        trace("event " + pkg + "/" + cls + " eventTime=" + e.getEventTime()
-                + " window=" + e.getWindowId() + " paused=" + paused + " home=" + onAmazonHome
-                + " sinceLaunch=" + (SystemClock.uptimeMillis() - lastLaunch));
-        if (pkg == null) return;
-        if (!AMAZON.contentEquals(pkg)) {
-            if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
-            onAmazonHome = false;
-            paused = false;
-            handler.removeCallbacks(retry);
-            // A later return to Amazon's home is a new visit, even within REPEAT_MS.
-            // Otherwise a quick second HOME is dropped after our first launch completed.
-            lastLaunch = 0;
-            if (!getPackageName().contentEquals(pkg)) arrived(this);
+        if (pkg == null || "com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
+        if (getPackageName().contentEquals(pkg)) {
+            if (cls != null && Home.class.getName().contentEquals(cls)) {
+                // Our activity can report a late window event after a newer HOME press.
+                // Keep that return pending; a resume/window event does not prove it won.
+                paused = false;
+                homeRequested = true;
+                lastLaunch = 0;
+            } else if (cls != null && cls.toString().startsWith(getPackageName() + ".")) {
+                leaveHome(true); // Options, inputs or another deliberate in-app screen.
+            }
+            // The accessibility cover reports android.view.View in our package. It is
+            // part of the return operation, never evidence that the user left Home.
             return;
         }
-        onAmazonHome = cls != null && AMAZON_HOME.contentEquals(cls);
-        if (paused || !onAmazonHome) {
-            handler.removeCallbacks(retry);
+        if (!AMAZON.contentEquals(pkg)) { leaveHome(true); return; }
+        if (cls == null) return;
+        if (!AMAZON_HOME.contentEquals(cls)) {
+            // Popups and view events are not navigation. Only a declared activity,
+            // such as native Settings, may cancel a request for the chooser.
+            try {
+                getPackageManager().getActivityInfo(new ComponentName(AMAZON, cls.toString()), 0);
+                leaveHome(false);
+            } catch (PackageManager.NameNotFoundException ignored) { }
             return;
         }
+        homeRequested = true;
+        if (paused) return;
         long now = SystemClock.uptimeMillis();
         handler.removeCallbacks(retry);
         if (now - lastLaunch < REPEAT_MS) {
@@ -189,6 +198,20 @@ public final class Guard extends AccessibilityService {
         }
         lastLaunch = now;
         launchWhenCovered();
+    }
+
+    private void leaveHome(boolean resumeTakeover) {
+        homeRequested = false;
+        lastLaunch = 0;
+        if (resumeTakeover) paused = false;
+        cancelReturn();
+    }
+
+    private void cancelReturn() {
+        handler.removeCallbacks(launch);
+        handler.removeCallbacks(retry);
+        arrived(this);
+        uncover();
     }
 
     /**
@@ -215,7 +238,7 @@ public final class Guard extends AccessibilityService {
             public boolean onPreDraw() {
                 cover.getViewTreeObserver().removeOnPreDrawListener(this);
                 handler.removeCallbacks(launch);
-                home(Guard.this, SHOWN_DELAY_MS);
+                if (!paused && homeRequested) home(Guard.this, SHOWN_DELAY_MS);
                 return true;
             }
         });
@@ -232,7 +255,6 @@ public final class Guard extends AccessibilityService {
     }
 
     private void uncover() {
-        trace("uncover home=" + onAmazonHome);
         handler.removeCallbacks(uncover);
         if (cover != null) cover.setVisibility(View.GONE);
     }
@@ -240,9 +262,4 @@ public final class Guard extends AccessibilityService {
     @Override
     public void onInterrupt() {}
 
-    private void trace(String message) {
-        if (new java.io.File(Config.get(this).dir, "debug-home").isFile()) {
-            android.util.Log.i("DEBUG-home-race", message);
-        }
-    }
 }

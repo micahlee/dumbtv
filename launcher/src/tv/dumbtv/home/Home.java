@@ -225,7 +225,6 @@ public final class Home extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
-        Guard.arrived(this);
         cfg.refresh();
         cfg.visited();
         if (cfg.version() != applied) apply();
@@ -240,7 +239,7 @@ public final class Home extends Activity {
 
     @Override
     public void onEnterAnimationComplete() {
-        Guard.shown();
+        Guard.shown(this);
     }
 
     @Override
