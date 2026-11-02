@@ -66,6 +66,17 @@
             android:name=".Keeper"
             android:exported="false" />
 
+        <activity android:name=".MemoryPreview" android:exported="true"
+            android:excludeFromRecents="true" android:screenOrientation="landscape" />
+
+        <service android:name=".Memories" android:exported="true"
+            android:label="Photo memories" android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

@@ -57,6 +57,10 @@ public final class Options extends Activity {
         list.addView(action("Apps on home screen", () -> pick(Catalog.APPS)));
         list.addView(action("Inputs on home screen", () -> pick(Catalog.INPUTS)));
         list.addView(action("Reset order, names and hidden tiles", this::reset));
+        if ("on".equals(cfg.get("memories.enabled", "off"))) {
+            list.addView(action("Preview photo memories", () -> startActivity(
+                    new android.content.Intent(this, MemoryPreview.class))));
+        }
         list.addView(action("Open Amazon's home screen", () -> {
             Guard.amazon(this);
             finish();
