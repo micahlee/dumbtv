@@ -152,6 +152,9 @@ public final class Guard extends AccessibilityService {
             if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
             onAmazonHome = false;
             paused = false;
+            // A later return to Amazon's home is a new visit, even within REPEAT_MS.
+            // Otherwise a quick second HOME is dropped after our first launch completed.
+            lastLaunch = 0;
             if (!getPackageName().contentEquals(pkg)) arrived(this);
             return;
         }
