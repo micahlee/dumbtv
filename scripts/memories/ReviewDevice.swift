@@ -76,7 +76,7 @@ final class ReviewDevice {
         guard live() else { return "expired" }
         guard let control = config["review_control"] as? [String: Any], control["enabled"] as? Bool == true,
               let device = config["device"] as? String, let host = device.split(separator: ":").first else { return "unavailable" }
-        let deadline = min(Date().addingTimeInterval(27), Date(timeIntervalSince1970: Double(command.expiresAt) / 1000))
+        let deadline = min(Date().addingTimeInterval(27), Date(timeIntervalSince1970: Double(command.executeBefore) / 1000))
         if !reachable(String(host)) {
             guard live(), wake(control) else { return live() ? "unavailable" : "expired" }
             let wakeDeadline = min(deadline, Date().addingTimeInterval(14))

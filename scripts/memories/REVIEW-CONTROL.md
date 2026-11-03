@@ -8,8 +8,10 @@ in private configuration, never in Git. Queue location is `review-commands`
 beside the application's existing config, owned by the login user, mode 0700.
 
 The only accepted command is `tv.dumbtv.review-launch/v1`: operationID (canonical
-UUID), owner, issuedAt and expiresAt (integer milliseconds). Its deadline is
-exactly two hours after the original wake-alarm offer. No shell, app name, target
+UUID), owner, issuedAt, expiresAt and executeBefore (integer milliseconds). Its deadline is
+exactly two hours after the original wake-alarm offer. The Service also fixes a
+30-second execution deadline so an offline helper cannot wake the TV much
+later after a phone request times out. No shell, app name, target
 address or photo/calendar payload is accepted. Commands must be private regular
 files, not symlinks. The login app atomically claims each operation before any
 network effect and keeps its receipt. An interrupted claim becomes uncertain;

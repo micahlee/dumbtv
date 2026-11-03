@@ -8,6 +8,7 @@ struct ReviewCommand: Codable {
     let owner: String
     let issuedAt: Int64
     let expiresAt: Int64
+    let executeBefore: Int64
     static let contract = "tv.dumbtv.review-launch/v1"
     func valid(owner expected: String) -> Bool {
         contract == Self.contract && owner == expected && !expected.isEmpty &&
@@ -16,7 +17,8 @@ struct ReviewCommand: Codable {
     }
     func live(at now: Int64) -> Bool {
         issuedAt > 0 && issuedAt <= now + 5000 && issuedAt >= now - 7_200_000 &&
-            expiresAt > now && expiresAt - issuedAt == 7_200_000
+            expiresAt > now && expiresAt - issuedAt == 7_200_000 &&
+            executeBefore > now && executeBefore <= expiresAt && executeBefore > issuedAt
     }
 }
 
@@ -48,7 +50,7 @@ final class ReviewCommandQueue {
         let length = read(fd, &bytes, bytes.count)
         guard length > 0, length <= 2048,
               let object = try? JSONSerialization.jsonObject(with: Data(bytes.prefix(length))) as? [String: Any],
-              Set(object.keys) == Set(["contract", "operationID", "owner", "issuedAt", "expiresAt"]),
+              Set(object.keys) == Set(["contract", "operationID", "owner", "issuedAt", "expiresAt", "executeBefore"]),
               let result = try? JSONDecoder().decode(ReviewCommand.self, from: Data(bytes.prefix(length))),
               result.valid(owner: owner), result.operationID == url.deletingPathExtension().lastPathComponent else { return nil }
         return result
