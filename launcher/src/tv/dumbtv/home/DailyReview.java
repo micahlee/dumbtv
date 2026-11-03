@@ -4,9 +4,6 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.SpannableString;
-import android.text.Spanned;
-import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -173,9 +170,9 @@ public final class DailyReview extends Activity {
         left.addView(weatherCard(start, end), new LinearLayout.LayoutParams(MATCH, WRAP));
         LinearLayout.LayoutParams workLp = new LinearLayout.LayoutParams(MATCH, WRAP); workLp.topMargin = dp(8);
         left.addView(workCard(start, end), workLp);
-        TextView hourlyTitle = label("Hourly · temperature / rain", 12, ACCENT); hourlyTitle.setPadding(dp(3), dp(10), 0, dp(5));
+        TextView hourlyTitle = label("Hourly forecast", 12, ACCENT); hourlyTitle.setPadding(dp(3), dp(10), 0, dp(5));
         left.addView(hourlyTitle);
-        left.addView(scrolling(hourly(start, end)), new LinearLayout.LayoutParams(MATCH, 0, 1));
+        left.addView(hourly(start, end), new LinearLayout.LayoutParams(MATCH, 0, 1));
         LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, MATCH, .28f); leftLp.rightMargin = dp(16);
         content.addView(left, leftLp);
         LinearLayout agenda = agenda(start, end);
@@ -214,18 +211,25 @@ public final class DailyReview extends Activity {
             else { low = p.optInt("temperature"); if (daily == null) daily = p; }
         }
         String range = "High " + (high == null ? "—" : high + "°") + "  Low " + (low == null ? "—" : low + "°");
+        String condition = current != null ? current.optString("condition") : daily == null ? "Forecast unavailable" : daily.optString("condition");
+        boolean daylight = current != null ? current.optBoolean("day", true) : daily == null || daily.optBoolean("day", true);
+        LinearLayout summary = new LinearLayout(this); summary.setGravity(Gravity.CENTER_VERTICAL);
+        summary.addView(new WeatherIcon(this, ReviewWeather.kind(condition), daylight, 0xFF15233A, condition),
+                new LinearLayout.LayoutParams(dp(50), dp(50)));
+        LinearLayout temperatures = column(); temperatures.setPadding(dp(8), 0, 0, dp(4));
+        temperatures.addView(label(current == null ? "—°F" : current.optInt("temperature") + "°F", 30, WHITE));
+        TextView highLow = label(range, 12, WHITE); highLow.setPadding(0, dp(3), 0, 0); temperatures.addView(highLow);
+        summary.addView(temperatures, new LinearLayout.LayoutParams(0, WRAP, 1));
+        box.addView(summary, new LinearLayout.LayoutParams(MATCH, WRAP));
+        addLine(box, condition, 15, WHITE);
         if (current != null) {
-            String temperature = current.optInt("temperature") + "°F";
-            SpannableString value = new SpannableString(temperature + "   " + range);
-            value.setSpan(new RelativeSizeSpan(.44f), temperature.length(), value.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            TextView heading = label("", 32, WHITE); heading.setText(value); heading.setPadding(0, 0, 0, dp(6)); box.addView(heading);
-            addLine(box, current.optString("condition"), 15, WHITE);
-            addLine(box, "Forecast · " + fmt(target, "h a") + "  |  Wind " + current.optString("wind"), 10, MUTED);
-        } else {
-            addLine(box, daily == null ? "Forecast unavailable for this time" : daily.optString("condition"), 16, MUTED);
-            addLine(box, range, 15, WHITE);
+            LinearLayout precipitation = new LinearLayout(this); precipitation.setGravity(Gravity.CENTER_VERTICAL);
+            precipitation.addView(WeatherIcon.precipitation(this), new LinearLayout.LayoutParams(dp(13), dp(13)));
+            TextView detail = label(" " + (current.isNull("rain") ? "—" : current.optInt("rain") + "%")
+                    + " precip · Wind " + current.optString("wind"), 10, MUTED);
+            precipitation.addView(detail, new LinearLayout.LayoutParams(0, WRAP, 1)); box.addView(precipitation);
         }
-        if (weather.optLong("hourlyIssuedAt") > 0) addLine(box, "NWS issued " + age(weather.optLong("hourlyIssuedAt")), 10, MUTED);
+        addLine(box, "Forecast · " + fmt(target, "h a") + "  ·  NWS " + age(weather.optLong("hourlyIssuedAt")), 10, MUTED);
         if (!weather.optString("error").isEmpty() || System.currentTimeMillis()-weather.optLong("fetchedAt") > 2*HOUR
                 || System.currentTimeMillis()-weather.optLong("hourlyIssuedAt") > 6*HOUR)
             addLine(box, "Saved forecast · check refresh time below", 11, 0xFFFFCA83);
@@ -316,20 +320,13 @@ public final class DailyReview extends Activity {
         return list;
     }
 
-    private LinearLayout hourly(long start, long end) {
-        LinearLayout hours = column(); JSONObject weather = object(data, "weather"); int count = 0;
-        for (JSONObject p : objects(weather, "hourly")) {
-            if (!overlaps(p, start, end) || p.optLong("end") <= System.currentTimeMillis()) continue;
-            LinearLayout cell = new LinearLayout(this); cell.setPadding(dp(8), dp(6), dp(8), dp(6)); cell.setGravity(Gravity.CENTER_VERTICAL);
-            cell.addView(label(fmt(p.optLong("start"), "h a"), 11, MUTED), new LinearLayout.LayoutParams(dp(47), WRAP));
-            cell.addView(label(p.optInt("temperature") + "°", 14, WHITE), new LinearLayout.LayoutParams(0, WRAP, 1));
-            cell.addView(label(p.isNull("rain") ? "—" : p.optInt("rain") + "%", 12, MUTED));
-            cell.setContentDescription(fmt(p.optLong("start"), "h a") + ", " + p.optInt("temperature")
-                    + " degrees, " + p.optString("condition") + ", rain " + (p.isNull("rain") ? "unknown" : p.optInt("rain") + "%"));
-            cell.setFocusable(true); cell.setOnFocusChangeListener((v, focused) -> v.setBackground(Ui.round(focused ? 0xFF294463 : 0xFF15233A, dp(6))));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP); lp.bottomMargin = dp(3); hours.addView(cell, lp); count++;
+    private HourlyChart hourly(long start, long end) {
+        List<ReviewWeather.Hour> hours = new ArrayList<>();
+        for (JSONObject p : objects(object(data, "weather"), "hourly")) {
+            Double rain = p.isNull("rain") ? null : p.optDouble("rain", Double.NaN);
+            hours.add(new ReviewWeather.Hour(p.optLong("start"), p.optLong("end"),
+                    p.optDouble("temperature", Double.NaN), rain, p.optString("condition"), p.optBoolean("day", true)));
         }
-        if (count == 0) hours.addView(label("No hourly forecast available for today", 12, MUTED));
-        return hours;
+        return new HourlyChart(this, new ReviewWeather.Series(hours, start, end, System.currentTimeMillis()), zone);
     }
 }

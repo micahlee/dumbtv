@@ -12,6 +12,18 @@ availability during an explicitly labeled 8 AM–6 PM window with a compact
 green/amber bar; exact busy times remain in the agenda. This is calendar
 availability, not inferred presence or working hours.
 
+Weather uses local vector icons for clear sun/moon, partly cloudy, cloudy, rain,
+thunderstorms, snow, ice/mix, fog and wind. The original forecast text remains
+visible; unknown conditions use an unknown symbol. The remaining hourly forecast
+is a native temperature line chart with numeric temperatures, time labels,
+condition icons and precipitation-probability bars. Left/right while the chart
+is focused inspects each hour's exact temperature, condition and precipitation
+chance. The calendar keeps its full height and width. Actual elapsed time sets
+horizontal spacing; missing intervals break the line rather than interpolating.
+Unknown precipitation is displayed as unknown, not zero. Flat, single-point and
+unavailable forecasts have explicit safe display behavior. No image downloads,
+chart libraries, animations, new permissions or Mini/provider changes are needed.
+
 ## Mini configuration
 
 Build/install only fresh, clean, fetched `origin/main`, as for the existing
