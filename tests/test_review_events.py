@@ -16,6 +16,8 @@ class ReviewEventGroupingTest(unittest.TestCase):
         java = str(Path(home)/"bin/java") if home else shutil.which("java")
         if not javac or not java:
             self.skipTest("JDK required for native event grouping regression")
+        if not home and subprocess.run([javac, "-version"], capture_output=True, timeout=10).returncode:
+            self.skipTest("JDK unavailable (the macOS Java launcher may only be a stub)")
         with tempfile.TemporaryDirectory() as output:
             subprocess.run([javac, "--release", "8", "-d", output,
                             str(ROOT/"launcher/src/tv/dumbtv/home/ReviewEvents.java"),
