@@ -1004,7 +1004,7 @@ public final class Home extends Activity {
 
     private void menu(Tile t) {
         boolean app = Catalog.APPS.equals(t.kind);
-        String[] actions = app
+        String[] actions = app && t.item.info != null
                 ? new String[] {"Move", "Rename", "Hide", "App info"}
                 : new String[] {"Move", "Rename", "Hide"};
         new AlertDialog.Builder(this, Ui.DIALOG)

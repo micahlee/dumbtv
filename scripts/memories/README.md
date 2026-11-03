@@ -1,5 +1,7 @@
 # Offline photo memories
 
+The same Mini owner can optionally refresh the [Daily Review weather/calendar tile](DAILY-REVIEW.md).
+
 This opt-in addition to the launcher displays locally cached photos as an Android
 DreamService. The launcher still has no network or storage permission on Fire OS 7.
 It reads only its own `files/memories/` directory. The feature is off unless

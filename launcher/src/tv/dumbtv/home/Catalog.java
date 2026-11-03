@@ -32,6 +32,10 @@ final class Catalog {
         List<Item> out = new ArrayList<>(found.values());
         Collator collator = Collator.getInstance();
         Collections.sort(out, (a, b) -> collator.compare(a.label.toString(), b.label.toString()));
+        Item review = new Item("daily-review", "Daily Review", new Intent(c, DailyReview.class));
+        review.leanback = true;
+        review.banner = c.getDrawable(R.drawable.review_banner);
+        out.add(0, review);
         return out;
     }
 
@@ -88,6 +92,7 @@ final class Catalog {
     }
 
     static boolean shown(Config cfg, String kind, Item it) {
+        if ("daily-review".equals(it.id) && !"on".equals(cfg.get("review.enabled", "off"))) return false;
         if (cfg.list(kind + ".hide").contains(it.id)) return false;
         return !APPS.equals(kind) || it.leanback || cfg.list("apps.show").contains(it.id);
     }

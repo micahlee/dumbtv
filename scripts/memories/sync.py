@@ -402,6 +402,14 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     config = json.loads(Path(args.config).expanduser().read_text())
+    if config.get("daily_review", {}).get("enabled") and not args.dry_run:
+        # Independent of photo enumeration: a missing OneDrive folder must not
+        # prevent weather/calendar updates. Both jobs use the same native owner.
+        import daily_review
+        try:
+            print(json.dumps({"review": daily_review.refresh(config, args.prepare_only)}))
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+            print(json.dumps({"review": "refresh_failed_cache_retained"}), file=sys.stderr)
     try:
         print(json.dumps(refresh(config, args.prepare_only, args.dry_run, args.limit)))
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:

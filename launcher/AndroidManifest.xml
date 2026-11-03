@@ -69,6 +69,9 @@
         <activity android:name=".MemoryPreview" android:exported="true"
             android:excludeFromRecents="true" android:screenOrientation="landscape" />
 
+        <activity android:name=".DailyReview" android:exported="true"
+            android:excludeFromRecents="true" android:screenOrientation="landscape" />
+
         <service android:name=".Memories" android:exported="true"
             android:label="Photo memories" android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>
