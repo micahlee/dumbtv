@@ -2,11 +2,12 @@
 import Foundation
 import ImageIO
 import CoreGraphics
+import CoreImage
 import Vision
 
 let flags = Set(CommandLine.arguments.dropFirst(3))
-guard CommandLine.arguments.count >= 3 && flags.isSubset(of: ["--wallpaper", "--curate"])
-else { fputs("usage: memory-image INPUT OUTPUT [--wallpaper] [--curate]\n", stderr); exit(2) }
+guard CommandLine.arguments.count >= 3 && flags.isSubset(of: ["--wallpaper", "--curate", "--blur-fill"])
+else { fputs("usage: memory-image INPUT OUTPUT [--wallpaper] [--curate] [--blur-fill]\n", stderr); exit(2) }
 let input = URL(fileURLWithPath: CommandLine.arguments[1])
 let output = URL(fileURLWithPath: CommandLine.arguments[2])
 guard let source = CGImageSourceCreateWithURL(input as CFURL, nil) else { exit(3) }
@@ -47,13 +48,29 @@ if flags.contains("--curate") {
         "textCoverage": min(1.0, blocks.reduce(0.0) { $0 + $1.boundingBox.width * $1.boundingBox.height })]
 }
 var image = thumbnail
-if flags.contains("--wallpaper") {
+if flags.contains("--wallpaper") || flags.contains("--blur-fill") {
     guard let color = CGColorSpace(name: CGColorSpace.sRGB),
           let canvas = CGContext(data: nil, width: 1920, height: 1080, bitsPerComponent: 8,
                                  bytesPerRow: 0, space: color,
                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { exit(4) }
     canvas.setFillColor(CGColor(gray: 0, alpha: 1))
     canvas.fill(CGRect(x: 0, y: 0, width: 1920, height: 1080))
+    if flags.contains("--blur-fill") {
+        // Only the decorative backdrop is cropped. The sharp foreground below remains complete.
+        let fill = max(1920.0 / Double(thumbnail.width), 1080.0 / Double(thumbnail.height))
+        let backdrop = CIImage(cgImage: thumbnail)
+            .transformed(by: CGAffineTransform(scaleX: fill, y: fill))
+            .transformed(by: CGAffineTransform(translationX: (1920 - Double(thumbnail.width) * fill) / 2,
+                                              y: (1080 - Double(thumbnail.height) * fill) / 2))
+            .clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 40.0])
+        let context = CIContext(options: [.cacheIntermediates: false])
+        guard let blurred = context.createCGImage(backdrop, from: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        else { exit(8) }
+        canvas.draw(blurred, in: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        canvas.setFillColor(CGColor(gray: 0, alpha: 0.35))
+        canvas.fill(CGRect(x: 0, y: 0, width: 1920, height: 1080))
+    }
     let scale = min(1920.0 / Double(thumbnail.width), 1080.0 / Double(thumbnail.height))
     let width = Double(thumbnail.width) * scale, height = Double(thumbnail.height) * scale
     canvas.interpolationQuality = .high
@@ -65,7 +82,9 @@ if flags.contains("--wallpaper") {
 guard let destination = CGImageDestinationCreateWithURL(output as CFURL, "public.jpeg" as CFString, 1, nil) else { exit(4) }
 CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
 guard CGImageDestinationFinalize(destination) else { exit(5) }
-var json: [String: Any] = ["width": image.width, "height": image.height]
+var json: [String: Any] = ["width": image.width, "height": image.height,
+    "sourceWidth": thumbnail.width, "sourceHeight": thumbnail.height,
+    "frameFill": flags.contains("--blur-fill") ? "blur" : "black"]
 if let curation = curation { json["curation"] = curation }
 if let taken = taken { json["taken"] = String(taken.prefix(10)).replacingOccurrences(of: ":", with: "-") }
 else { json["taken"] = NSNull() }

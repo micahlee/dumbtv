@@ -68,6 +68,21 @@ Choose `background=image`, `rotate=minute`, and, for readable tiles, `dim=60` in
 The last collection remains available if a refresh fails or finds no recent photos.
 Disable rotation or choose a solid background to undo it.
 
+### Full-frame soft background
+
+Set `frame_fill` to `"blur"` in the Mac configuration for a complete 1920×1080
+frame in both streams. The original photo stays sharp, centered and aspect-fitted
+with all its edges intact. A separately scaled, blurred and darkened copy fills
+the space behind it. Only this decorative backdrop is cropped. No surroundings
+are invented, and no photo is sent to an image-generation service.
+
+The mini pre-renders the JPEG, so the TV still decodes just one image per slide.
+People/place filtering runs on the original thumbnail before composition.
+Versioned render keys force existing black-border copies to be regenerated under
+new filenames; the ordinary complete-file/atomic-index publication rules apply.
+Set `frame_fill` back to `"black"` and refresh to restore the previous presentation.
+The default is `"black"` for existing configurations.
+
 Use a dedicated private JSON configuration (mode 0600) with these keys:
 
 ```json
@@ -79,6 +94,7 @@ Use a dedicated private JSON configuration (mode 0600) with these keys:
   "adb": "/absolute/path/to/adb",
   "adb_port": 5038,
   "suitable_only": true,
+  "frame_fill": "blur",
   "device": "TV_HOST:5555"
 }
 ```
