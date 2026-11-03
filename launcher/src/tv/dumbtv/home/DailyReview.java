@@ -1,7 +1,6 @@
 package tv.dumbtv.home;
 
 import android.app.Activity;
-import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,7 +11,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -30,10 +28,8 @@ import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.TimeZone;
 
 /** Offline family dashboard. Only the Mini reads Google/NWS; this Activity has no network access. */
@@ -45,7 +41,6 @@ public final class DailyReview extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private JSONObject data = new JSONObject();
     private TimeZone zone = TimeZone.getTimeZone("America/New_York");
-    private int selected;
     private String loaded = "";
     private long shownDay;
     private long shownHour;
@@ -56,7 +51,7 @@ public final class DailyReview extends Activity {
         @Override public void run() {
             long today = dayStart(System.currentTimeMillis());
             if (load() || today != shownDay || System.currentTimeMillis()/HOUR != shownHour) {
-                selected = today != shownDay ? 0 : selected; render();
+                render();
             } else updateFooter();
             handler.postDelayed(this, 60000);
         }
@@ -164,38 +159,36 @@ public final class DailyReview extends Activity {
     private void render() {
         shownDay = dayStart(System.currentTimeMillis());
         shownHour = System.currentTimeMillis()/HOUR;
-        long start = plusDays(shownDay, selected), end = plusDays(start, 1);
-        root = column(); root.setBackgroundColor(0xFF0A1425); root.setPadding(dp(34), dp(22), dp(34), dp(18));
+        long start = shownDay, end = plusDays(start, 1);
+        root = column(); root.setBackgroundColor(0xFF0A1425); root.setPadding(dp(28), dp(16), dp(28), dp(14));
         LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout titles = column();
-        titles.addView(label("Daily Review", 26, WHITE));
-        titles.addView(label(fmt(start, "EEEE, MMMM d") + "  ·  " + zone.getDisplayName(zone.inDaylightTime(new Date(start)), TimeZone.SHORT), 13, MUTED));
-        header.addView(titles, new LinearLayout.LayoutParams(0, WRAP, 1));
-        header.addView(button("Back to apps", this::finish));
+        header.addView(label("Daily Review", 20, WHITE));
+        TextView date = label("   " + fmt(start, "EEEE, MMMM d"), 13, MUTED);
+        header.addView(date, new LinearLayout.LayoutParams(0, WRAP, 1));
+        TextView back = button("Back to apps", this::finish); back.setPadding(dp(12), dp(7), dp(12), dp(7));
+        header.addView(back);
         root.addView(header, new LinearLayout.LayoutParams(MATCH, WRAP));
-        LinearLayout tabs = new LinearLayout(this); tabs.setPadding(0, dp(12), 0, dp(12));
-        TextView active = null;
-        for (int i=0; i<7; i++) {
-            final int day = i;
-            TextView tab = button((i == 0 ? "Today" : i == 1 ? "Tomorrow" : fmt(plusDays(shownDay, i), "EEE d"))
-                    + (selected == i ? "  •" : ""), () -> { selected = day; render(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, WRAP, 1); lp.rightMargin = dp(6);
-            tabs.addView(tab, lp); if (i == selected) active = tab;
-        }
-        root.addView(tabs);
         content = new LinearLayout(this);
         LinearLayout left = column();
-        left.addView(scrolling(weatherCard(start, end)), new LinearLayout.LayoutParams(MATCH, 0, 1.3f));
-        LinearLayout.LayoutParams workLp = new LinearLayout.LayoutParams(MATCH, 0, 1); workLp.topMargin = dp(10);
-        left.addView(scrolling(workCard(start, end)), workLp);
-        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, MATCH, .34f); leftLp.rightMargin = dp(14);
+        left.addView(weatherCard(start, end), new LinearLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout.LayoutParams workLp = new LinearLayout.LayoutParams(MATCH, WRAP); workLp.topMargin = dp(8);
+        left.addView(workCard(start, end), workLp);
+        TextView hourlyTitle = label("Hourly · temperature / rain", 12, ACCENT); hourlyTitle.setPadding(dp(3), dp(10), 0, dp(5));
+        left.addView(hourlyTitle);
+        left.addView(scrolling(hourly(start, end)), new LinearLayout.LayoutParams(MATCH, 0, 1));
+        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, MATCH, .28f); leftLp.rightMargin = dp(16);
         content.addView(left, leftLp);
-        content.addView(scrolling(agenda(start, end)), new LinearLayout.LayoutParams(0, MATCH, .66f));
-        root.addView(content, new LinearLayout.LayoutParams(MATCH, 0, 1));
-        hourly(start, end);
+        LinearLayout agenda = agenda(start, end);
+        content.addView(scrolling(agenda), new LinearLayout.LayoutParams(0, MATCH, .72f));
+        LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(MATCH, 0, 1); bodyLp.topMargin = dp(12);
+        root.addView(content, bodyLp);
         footer = label("", 10, MUTED); footer.setPadding(0, dp(8), 0, 0);
         updateFooter(); root.addView(footer);
-        setContentView(root); if (active != null) active.requestFocus();
+        setContentView(root);
+        back.requestFocus();
+        for (int i=0; i<agenda.getChildCount(); i++) if (agenda.getChildAt(i).isFocusable()) {
+            agenda.getChildAt(i).requestFocus(); break;
+        }
     }
 
     private void updateFooter() {
@@ -214,7 +207,7 @@ public final class DailyReview extends Activity {
         LinearLayout box = card(); JSONObject weather = object(data, "weather");
         addLine(box, weather.optString("label", "Weather"), 14, ACCENT);
         JSONObject current = null, daily = null; Integer high = null, low = null;
-        long target = selected == 0 ? System.currentTimeMillis() : start + 12*HOUR;
+        long target = System.currentTimeMillis();
         for (JSONObject p : objects(weather, "hourly")) if (p.optLong("start") <= target && p.optLong("end") > target) current = p;
         for (JSONObject p : objects(weather, "daily")) if (p.optLong("start") >= start && p.optLong("start") < end) {
             if (p.optBoolean("day")) { high = p.optInt("temperature"); daily = p; }
@@ -239,104 +232,104 @@ public final class DailyReview extends Activity {
         focusLines(box); return box;
     }
 
+    private void availabilityPart(LinearLayout bar, long duration, boolean busy) {
+        if (duration <= 0) return;
+        View segment = new View(this); segment.setBackgroundColor(busy ? 0xFFFFC18F : 0xFF91D8B7);
+        bar.addView(segment, new LinearLayout.LayoutParams(0, dp(8), (float)duration));
+    }
+
     private LinearLayout workCard(long start, long end) {
-        LinearLayout box = card(); addLine(box, "Work calendar · 8 AM–6 PM", 12, ACCENT);
+        LinearLayout box = card(); box.setPadding(dp(12), dp(10), dp(12), dp(10));
+        addLine(box, "Work calendar · 8 AM–6 PM", 11, ACCENT);
         JSONObject calendar = object(data, "calendar"); boolean found = false;
         for (JSONObject source : objects(calendar, "sources")) {
             if (!source.optBoolean("busyOnly")) continue;
             found = true;
-            if (!calendar.optString("error").isEmpty() || !source.optString("error").isEmpty() || source.optLong("fetchedAt") < System.currentTimeMillis()-2*HOUR) {
-                addLine(box, "Saved or unavailable · " + age(source.optLong("fetchedAt")), 12, 0xFFFFCA83);
-            }
+            if (!calendar.optString("error").isEmpty() || !source.optString("error").isEmpty() || source.optLong("fetchedAt") < System.currentTimeMillis()-2*HOUR)
+                addLine(box, "Saved availability · " + age(source.optLong("fetchedAt")), 10, 0xFFFFCA83);
             if (source.optLong("fetchedAt") == 0 || start < calendar.optLong("start") || end > calendar.optLong("end")) {
-                addLine(box, "Availability unavailable", 13, MUTED); continue;
+                addLine(box, "Availability unavailable", 12, MUTED); continue;
             }
             List<JSONObject> busy = new ArrayList<>();
             for (JSONObject event : objects(source, "events")) if (overlaps(event, start, end)) busy.add(event);
             Collections.sort(busy, Comparator.comparingLong(p -> p.optLong("start")));
             Calendar working = Calendar.getInstance(zone); working.setTimeInMillis(start); working.set(Calendar.HOUR_OF_DAY, 8);
             long a = working.getTimeInMillis(); working.set(Calendar.HOUR_OF_DAY, 18); long finish = working.getTimeInMillis();
+            LinearLayout bar = new LinearLayout(this);
             for (JSONObject event : busy) {
                 long b = Math.max(a, event.optLong("start")), e = Math.min(finish, event.optLong("end"));
                 if (e <= a || b >= finish) continue;
-                if (b > a) addLine(box, fmt(a, "h:mm") + "–" + fmt(b, "h:mm a") + "  Available", 12, 0xFF91D8B7);
-                addLine(box, fmt(b, "h:mm") + "–" + fmt(e, "h:mm a") + "  Busy", 12, 0xFFFFC18F);
-                a = Math.max(a, e);
+                availabilityPart(bar, b-a, false); availabilityPart(bar, e-b, true); a = Math.max(a, e);
             }
-            if (a < finish) addLine(box, fmt(a, "h:mm") + "–" + fmt(finish, "h:mm a") + "  Available", 12, 0xFF91D8B7);
+            availabilityPart(bar, finish-a, false); box.addView(bar, new LinearLayout.LayoutParams(MATCH, WRAP));
         }
-        if (!found) addLine(box, "Work calendar not loaded", 12, MUTED);
+        addLine(box, found ? "Green: available  ·  Amber: busy" : "Work calendar not loaded", 10, MUTED);
         focusLines(box); return box;
     }
 
     private LinearLayout agenda(long start, long end) {
         LinearLayout list = column(); JSONObject calendar = object(data, "calendar");
-        Map<String, JSONObject> instances = new LinkedHashMap<>();
-        addLine(list, "Family & calendars", 18, WHITE);
+        List<ReviewEvents.Event> raw = new ArrayList<>();
         StringBuilder warnings = new StringBuilder(); int sourceCount = 0;
         for (JSONObject source : objects(calendar, "sources")) {
             sourceCount++;
             boolean stale = System.currentTimeMillis()-source.optLong("fetchedAt") > 2*HOUR || !source.optString("error").isEmpty();
             if (stale) warnings.append(warnings.length() == 0 ? "Saved/unavailable: " : " · ").append(source.optString("label"));
             for (JSONObject event : objects(source, "events")) if (overlaps(event, start, end)) {
-                String key = event.optString("key");
-                // Same iCalendar instance copied to multiple calendars appears once.
-                // Independent calendars' distinct events keep their own identities.
-                try {
-                    JSONObject existing = instances.get(key);
-                    if (existing == null) instances.put(key, new JSONObject(event.toString()));
-                    else existing.put("source", existing.optString("source") + " / " + event.optString("source"));
-                } catch (JSONException ignored) { cacheError = true; }
+                raw.add(new ReviewEvents.Event(event.optString("key"), event.optLong("start"), event.optLong("end"),
+                        event.optBoolean("allDay"), event.optBoolean("busyOnly"), event.optString("title"),
+                        event.optString("location"), source.optString("key", source.optString("label")),
+                        source.optString("label"), event.optString("color")));
             }
         }
-        List<JSONObject> events = new ArrayList<>(instances.values());
-        Collections.sort(events, (a, b) -> {
-            int allDay = Boolean.compare(b.optBoolean("allDay"), a.optBoolean("allDay"));
-            return allDay != 0 ? allDay : Long.compare(a.optLong("start"), b.optLong("start"));
-        });
-        addLine(list, sourceCount + " calendars · Up/down to scroll", 11, MUTED);
-        if (!calendar.optString("error").isEmpty()) addLine(list, calendar.optString("error"), 12, 0xFFFFCA83);
-        if (warnings.length() > 0) addLine(list, warnings.toString(), 11, 0xFFFFCA83);
+        List<ReviewEvents.Event> events = ReviewEvents.combine(raw);
+        LinearLayout heading = new LinearLayout(this); heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.addView(label("Today's calendar", 17, WHITE), new LinearLayout.LayoutParams(0, WRAP, 1));
+        heading.addView(label(events.size() + " events · " + sourceCount + " calendars", 11, MUTED));
+        LinearLayout.LayoutParams headingLp = new LinearLayout.LayoutParams(MATCH, WRAP); headingLp.bottomMargin = dp(10);
+        list.addView(heading, headingLp);
+        if (!calendar.optString("error").isEmpty()) addLine(list, calendar.optString("error"), 11, 0xFFFFCA83);
+        if (warnings.length() > 0) addLine(list, warnings.toString(), 10, 0xFFFFCA83);
         if (start < calendar.optLong("start") || end > calendar.optLong("end"))
-            addLine(list, "This day has not been refreshed yet", 13, 0xFFFFCA83);
-        if (events.isEmpty()) addLine(list, sourceCount == 0 ? "Calendar setup is pending on the mini"
-                : "No saved events for this day", 18, MUTED);
-        for (JSONObject event : events) {
-            LinearLayout row = card();
-            row.setPadding(dp(16), dp(8), dp(16), dp(8));
-            String time = event.optBoolean("allDay") ? "ALL DAY" : fmt(Math.max(start, event.optLong("start")), "h:mm a")
-                    + " – " + fmt(Math.min(end, event.optLong("end")), "h:mm a");
+            addLine(list, "Today has not been refreshed yet", 12, 0xFFFFCA83);
+        if (events.isEmpty()) addLine(list, sourceCount == 0 ? "Calendar setup is pending on the mini" : "No saved events for today", 17, MUTED);
+        for (ReviewEvents.Event event : events) {
+            LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.TOP);
+            row.setPadding(dp(12), dp(6), dp(12), dp(6)); row.setBackground(Ui.round(0xFF15233A, dp(8)));
+            String time = event.allDay ? "All day" : fmt(Math.max(start, event.start), "h:mm a")
+                    + "\n– " + fmt(Math.min(end, event.end), "h:mm a");
             int color = ACCENT;
-            try { color = android.graphics.Color.parseColor(event.optString("color")); }
-            catch (IllegalArgumentException ignored) { /* Untrusted provider color uses fallback. */ }
-            addLine(row, time + "  ·  " + event.optString("source"), 12, color);
-            addLine(row, event.optString("title"), 17, WHITE);
-            if (!event.optString("location").isEmpty()) addLine(row, event.optString("location"), 12, MUTED);
-            row.setFocusable(true); row.setContentDescription(time + ", " + event.optString("title") + ", " + event.optString("source"));
-            row.setOnFocusChangeListener((view, focus) -> view.setBackground(Ui.round(focus ? 0xFF294463 : 0xFF15233A, dp(12))));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP); lp.bottomMargin = dp(8);
-            list.addView(row, lp);
+            try { color = android.graphics.Color.parseColor(event.color); }
+            catch (IllegalArgumentException ignored) { /* Provider color uses fallback. */ }
+            TextView when = label(time, 12, color); when.setPadding(0, dp(2), dp(12), 0);
+            row.addView(when, new LinearLayout.LayoutParams(dp(99), WRAP));
+            LinearLayout detail = column();
+            detail.addView(label(event.title, events.size() > 10 ? 14 : 16, WHITE), new LinearLayout.LayoutParams(MATCH, WRAP));
+            String metadata = event.sourceLabels() + (event.location.isEmpty() ? "" : "  ·  " + event.location);
+            TextView sources = label(metadata, 10, MUTED); sources.setPadding(0, dp(3), 0, 0);
+            detail.addView(sources, new LinearLayout.LayoutParams(MATCH, WRAP));
+            row.addView(detail, new LinearLayout.LayoutParams(0, WRAP, 1));
+            row.setFocusable(true); row.setContentDescription(time + ", " + event.title + ", " + metadata);
+            row.setOnFocusChangeListener((view, focus) -> view.setBackground(Ui.round(focus ? 0xFF294463 : 0xFF15233A, dp(8))));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP); lp.bottomMargin = dp(5); list.addView(row, lp);
         }
         return list;
     }
 
-    private void hourly(long start, long end) {
-        JSONObject weather = object(data, "weather");
-        TextView title = label("Hourly forecast · temperature / rain chance", 12, ACCENT); title.setPadding(0, dp(8), 0, dp(5));
-        root.addView(title);
-        HorizontalScrollView scroll = new HorizontalScrollView(this); scroll.setFocusable(false);
-        LinearLayout hours = new LinearLayout(this); int count = 0;
+    private LinearLayout hourly(long start, long end) {
+        LinearLayout hours = column(); JSONObject weather = object(data, "weather"); int count = 0;
         for (JSONObject p : objects(weather, "hourly")) {
-            if (!overlaps(p, start, end) || (selected == 0 && p.optLong("end") <= System.currentTimeMillis())) continue;
-            LinearLayout cell = column(); cell.setPadding(dp(10), dp(7), dp(10), dp(7));
-            addLine(cell, fmt(p.optLong("start"), "h a"), 11, MUTED);
-            addLine(cell, p.optInt("temperature") + "°  /  " + (p.isNull("rain") ? "—" : p.optInt("rain") + "%"), 14, WHITE);
-            TextView condition = label(p.optString("condition"), 10, MUTED); condition.setMaxLines(2); cell.addView(condition);
-            cell.setFocusable(true); cell.setOnFocusChangeListener((v, focused) -> v.setBackground(Ui.round(focused ? 0xFF294463 : 0xFF15233A, dp(8))));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(124), dp(87)); lp.rightMargin = dp(6); hours.addView(cell, lp); count++;
+            if (!overlaps(p, start, end) || p.optLong("end") <= System.currentTimeMillis()) continue;
+            LinearLayout cell = new LinearLayout(this); cell.setPadding(dp(8), dp(6), dp(8), dp(6)); cell.setGravity(Gravity.CENTER_VERTICAL);
+            cell.addView(label(fmt(p.optLong("start"), "h a"), 11, MUTED), new LinearLayout.LayoutParams(dp(47), WRAP));
+            cell.addView(label(p.optInt("temperature") + "°", 14, WHITE), new LinearLayout.LayoutParams(0, WRAP, 1));
+            cell.addView(label(p.isNull("rain") ? "—" : p.optInt("rain") + "%", 12, MUTED));
+            cell.setContentDescription(fmt(p.optLong("start"), "h a") + ", " + p.optInt("temperature")
+                    + " degrees, " + p.optString("condition") + ", rain " + (p.isNull("rain") ? "unknown" : p.optInt("rain") + "%"));
+            cell.setFocusable(true); cell.setOnFocusChangeListener((v, focused) -> v.setBackground(Ui.round(focused ? 0xFF294463 : 0xFF15233A, dp(6))));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP); lp.bottomMargin = dp(3); hours.addView(cell, lp); count++;
         }
-        if (count == 0) hours.addView(label("No hourly forecast available for this day", 13, MUTED));
-        scroll.addView(hours, new FrameLayout.LayoutParams(WRAP, WRAP));
-        root.addView(scroll, new LinearLayout.LayoutParams(MATCH, dp(91)));
+        if (count == 0) hours.addView(label("No hourly forecast available for today", 12, MUTED));
+        return hours;
     }
 }

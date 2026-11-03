@@ -1,13 +1,16 @@
 # Daily Review
 
 An opt-in native tile in the existing launcher, with no Android network or
-calendar permission. It shows today's weather, a horizontally scrollable hourly
-forecast, and seven days of composite Google Calendar events. Source labels and
+calendar permission. It shows today's weather, an hourly forecast sidebar,
+and a full-height composite agenda for today. There is no day-navigation bar.
+The header is a single compact line and event rows put times beside titles to
+fit more of the day at a glance. Unusually busy days can still scroll. Source labels and
 colors distinguish family, subscribed sports, on-call, personal and work inputs.
 The calendar's display titles are preserved. Free/busy-only calendars use the
 FreeBusy API and never invent meeting titles. The work panel shows calendar
-availability during an explicitly labeled 8 AM–6 PM window, not inferred presence
-or working hours.
+availability during an explicitly labeled 8 AM–6 PM window with a compact
+green/amber bar; exact busy times remain in the agenda. This is calendar
+availability, not inferred presence or working hours.
 
 ## Mini configuration
 
@@ -54,11 +57,18 @@ local opt-in cache.
   calendar list unless explicitly excluded. This includes subscriptions such as
   Crossbar; their upstream publication delay is controlled by Google/the feed.
 - Recurring instances are expanded, cancelled and self-declined events omitted,
-  all-day exclusive end dates and timezone/DST boundaries retained. Matching
-  iCalendar UID/start instances are deduplicated in the view.
+  all-day exclusive end dates and timezone/DST boundaries retained. The cache
+  covers seven days so today's view can roll over at midnight without a new fetch.
+- Display grouping combines matching iCalendar instances and independently
+  copied events across calendars when normalized titles, start/end and all-day
+  status match. Matching ignores case and extra whitespace. Venue conflicts,
+  different times and distinct events within the same calendar stay separate.
+  A missing venue is filled from the matching copy; ambiguous matches remain
+  separate. Busy-only/untitled entries do not use title matching. All originating
+  calendar labels are retained, without rewriting any calendar or cached event.
 - The TV cache contains only bounded display titles, locations, times, calendar
   display labels/colors and source freshness. No credentials, descriptions,
-  conferencing links, attendee identities or raw calendar IDs are transferred.
+  structured conference metadata, attendee identities or raw calendar IDs are transferred.
 - NWS point, daily and hourly forecasts are fetched as a complete pair. The
   current temperature is explicitly a **forecast**, not a station observation.
   High/low fields remain blank when the provider no longer supplies that period.
