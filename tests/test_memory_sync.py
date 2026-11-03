@@ -163,4 +163,50 @@ class PhotoCurationTest(unittest.TestCase):
             self.assertEqual(index.read_text(), "")
 
 
+class FrameFillTest(unittest.TestCase):
+    def helper(self, args, **kwargs):
+        Path(args[2]).write_bytes(b"converted fixture")
+        style = "blur" if "--blur-fill" in args else "black"
+        data = dict(taken=None, width=1920, height=1080, frameFill=style,
+                    sourceWidth=800, sourceHeight=1200)
+        return subprocess.CompletedProcess(args, 0, json.dumps(data), "")
+
+    def test_blurred_fill_rebuilds_both_streams_under_new_filenames(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(sync.subprocess, "run", side_effect=self.helper) as helper:
+            root = Path(d); source = root / "source"; source.mkdir(); state = root / "state"
+            day = dt.date.today().strftime("%m-%d")
+            (source / ("2000-" + day + ".jpg")).write_bytes(b"anniversary fixture")
+            (source / (str(dt.date.today()) + ".jpg")).write_bytes(b"recent fixture")
+            config = dict(owner_host=socket.gethostname(), sources=[str(source)], state_dir=str(state),
+                          image_helper="fixture-helper", days_ahead=0, recent_days=7)
+            sync.refresh(config, prepare_only=True)
+            old_memory = {p.name for p in (state / "frames").glob("*.jpg")}
+            old_wall = {p.name for p in (state / "wallpapers").glob("*.jpg")}
+            calls = helper.call_count
+            config["frame_fill"] = "blur"
+            result = sync.refresh(config, prepare_only=True)
+            self.assertEqual(result["frameFill"], "blur")
+            self.assertEqual(helper.call_count, calls + 2)
+            for entry in helper.call_args_list[calls:]:
+                self.assertIn("--blur-fill", entry.args[0])
+            new_records = json.loads((state / "metadata.json").read_text()).values()
+            new_memory = {r["file"] for r in new_records if r.get("frameFill") == "blur"}
+            new_wall = {p.name for p in (state / "wallpapers").glob("*.jpg")}
+            self.assertTrue(new_memory and new_memory.isdisjoint(old_memory))
+            self.assertTrue(new_wall and new_wall.isdisjoint(old_wall))
+
+    def test_curation_stays_enabled_for_both_blurred_streams(self):
+        config = dict(image_helper="helper", suitable_only=True, frame_fill="blur")
+        for wallpaper in [False, True]:
+            args = sync.image_arguments(config, Path("input"), Path("output"), wallpaper)
+            self.assertIn("--curate", args); self.assertIn("--blur-fill", args)
+            self.assertEqual("--wallpaper" in args, wallpaper)
+
+    def test_incomplete_frames_or_unknown_style_are_rejected(self):
+        for data in [{}, dict(frameFill="black", width=1920, height=1080),
+                     dict(frameFill="blur", width=1080, height=1920)]:
+            with self.assertRaises(RuntimeError): sync.frame_record(data, {"frame_fill": "blur"})
+        with self.assertRaises(RuntimeError): sync.frame_fill({"frame_fill": "unknown"})
+
+
 if __name__ == "__main__": unittest.main()

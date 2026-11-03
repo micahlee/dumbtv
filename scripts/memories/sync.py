@@ -21,6 +21,42 @@ EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
 WALLPAPER = re.compile(r"recent_[0-9a-f]{16}\.jpg\Z")
 WALLPAPER_REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/wallpapers"
 CURATION_VERSION = 1
+BLUR_RENDER_VERSION = "blur-16x9-v1"
+
+
+def frame_fill(config):
+    value = config.get("frame_fill", "black")
+    if value not in ("black", "blur"):
+        raise RuntimeError("Unknown photo frame fill")
+    return value
+
+
+def image_cache_key(source, config):
+    info = source.stat()
+    material = str(source) + ":" + str(info.st_size) + ":" + str(info.st_mtime_ns)
+    if frame_fill(config) == "blur":
+        material += ":" + BLUR_RENDER_VERSION
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+def image_arguments(config, source, target, wallpaper=False):
+    arguments = [config["image_helper"], str(source), str(target)]
+    if wallpaper:
+        arguments.append("--wallpaper")
+    if config.get("suitable_only", False):
+        arguments.append("--curate")
+    if frame_fill(config) == "blur":
+        arguments.append("--blur-fill")
+    return arguments
+
+
+def frame_record(data, config):
+    style = frame_fill(config)
+    if style == "blur" and (data.get("frameFill") != "blur" or data.get("width") != 1920
+                            or data.get("height") != 1080):
+        raise RuntimeError("Photo frame rendering is incomplete")
+    return {"frameFill": style, "sourceWidth": data.get("sourceWidth"),
+            "sourceHeight": data.get("sourceHeight")}
 
 
 def curation_record(data):
@@ -142,6 +178,7 @@ def recent_candidates(sources, today, days=7, limit=30):
 
 
 def prepare_wallpapers(config, state, today):
+    frame_fill(config)
     selected = recent_candidates(config["sources"], today, config.get("recent_days", 7),
                                  config.get("recent_limit", 30))
     folder = state / "wallpapers"
@@ -157,9 +194,7 @@ def prepare_wallpapers(config, state, today):
         if time.monotonic() > deadline:
             stats["complete"] = False
             break
-        info = source.stat()
-        key = hashlib.sha256((str(source) + ":" + str(info.st_size) + ":"
-                              + str(info.st_mtime_ns)).encode()).hexdigest()[:16]
+        key = image_cache_key(source, config)
         name = "recent_" + key + ".jpg"
         seen.add(name)
         target = folder / name
@@ -171,14 +206,12 @@ def prepare_wallpapers(config, state, today):
         if not target.is_file() or (curate and not checked):
             temp = folder / (name + ".part")
             try:
-                arguments = [config["image_helper"], str(source), str(temp), "--wallpaper"]
-                if curate:
-                    arguments.append("--curate")
-                result = subprocess.run(arguments,
+                result = subprocess.run(image_arguments(config, source, temp, wallpaper=True),
                                         capture_output=True, text=True, timeout=60)
                 if result.returncode:
                     raise RuntimeError("Image conversion failed")
                 values = json.loads(result.stdout)
+                rendering = frame_record(values, config)
                 proof = curation_record(values) if curate else {}
                 if curate and not proof["eligible"]:
                     metadata[name] = proof
@@ -188,7 +221,7 @@ def prepare_wallpapers(config, state, today):
                 if not 0 <= (today - taken).days < config.get("recent_days", 7):
                     continue
                 temp.replace(target)
-                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename", **proof}
+                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename", **proof, **rendering}
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                 stats["failures"] += 1
                 continue
@@ -261,6 +294,7 @@ def publish(adb, frames, index_path, allow_empty=False):
 def refresh(config, prepare_only=False, dry_run=False, limit=None):
     if socket.gethostname() != config["owner_host"]:
         raise RuntimeError("This refresh is configured for a different Mac")
+    frame_fill(config)
     today = dt.date.today()
     selected, undated = candidates(config["sources"], today,
                                    config.get("days_ahead", 7), config.get("per_day", 40),
@@ -288,9 +322,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             if time.monotonic() > deadline:
                 complete = False
                 break
-            info = path.stat()
-            key = hashlib.sha256((str(path) + ":" + str(info.st_size) + ":"
-                                  + str(info.st_mtime_ns)).encode()).hexdigest()[:16]
+            key = image_cache_key(path, config)
             record = metadata.get(key, {})
             checked = record.get("curationVersion") == CURATION_VERSION and type(record.get("eligible")) is bool
             if curate and checked and not record["eligible"]:
@@ -301,14 +333,12 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             if not NAME.fullmatch(filename) or not photo.is_file() or (curate and not checked):
                 temp = cache / (key + ".part.jpg")
                 try:
-                    arguments = [config["image_helper"], str(path), str(temp)]
-                    if curate:
-                        arguments.append("--curate")
-                    result = subprocess.run(arguments,
+                    result = subprocess.run(image_arguments(config, path, temp),
                                             capture_output=True, text=True, timeout=60)
                     if result.returncode:
                         raise RuntimeError("Image conversion failed")
                     data = json.loads(result.stdout)
+                    rendering = frame_record(data, config)
                     proof = curation_record(data) if curate else {}
                     if curate and not proof["eligible"]:
                         metadata[key] = proof
@@ -321,7 +351,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                     photo = cache / filename
                     temp.replace(photo)
                     metadata[key] = {"file": filename,
-                                     "dateSource": "EXIF" if data.get("taken") else "filename", **proof}
+                                     "dateSource": "EXIF" if data.get("taken") else "filename", **proof, **rendering}
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                     failures += 1
                     continue
@@ -339,7 +369,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         if not frames and (not curate or failures or not complete):
             raise RuntimeError("No eligible photos were prepared; preserving the TV cache")
         status = {"date": str(today), "photos": len(frames), "bytes": used,
-                  "conversionFailures": failures, "undatedSkipped": undated, "photosRejected": rejected}
+                  "conversionFailures": failures, "undatedSkipped": undated, "photosRejected": rejected,
+                  "frameFill": frame_fill(config)}
         wallpapers, wallpaper_stats = prepare_wallpapers(config, state, today) if config.get("recent_days", 0) else ([], {})
         status["wallpapers"] = len(wallpapers)
         status["wallpapersRejected"] = wallpaper_stats.get("rejected", 0)
