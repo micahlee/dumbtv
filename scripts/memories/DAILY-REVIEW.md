@@ -7,10 +7,9 @@ The header is a single compact line and event rows put times beside titles to
 fit more of the day at a glance. Unusually busy days can still scroll. Source labels and
 colors distinguish family, subscribed sports, on-call, personal and work inputs.
 The calendar's display titles are preserved. Free/busy-only calendars use the
-FreeBusy API and never invent meeting titles. The work panel shows calendar
-availability during an explicitly labeled 8 AM–6 PM window with a compact
-green/amber bar; exact busy times remain in the agenda. This is calendar
-availability, not inferred presence or working hours.
+FreeBusy API and never invent meeting titles. Work busy intervals appear in the
+agenda alongside other events. There is no separate work-availability strip;
+the weather sidebar gives that space to the hourly chart.
 
 Weather uses local vector icons for clear sun/moon, partly cloudy, cloudy, rain,
 thunderstorms, snow, ice/mix, fog and wind. The original forecast text remains
