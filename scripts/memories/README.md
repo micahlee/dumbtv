@@ -83,6 +83,14 @@ new filenames; the ordinary complete-file/atomic-index publication rules apply.
 Set `frame_fill` back to `"black"` and refresh to restore the previous presentation.
 The default is `"black"` for existing configurations.
 
+For smooth gradients in the slideshow, set `memories.color=full` in the TV's
+`home.conf`. This opts into ARGB_8888 decoding instead of the default compact
+RGB_565. A 1920×1080 image uses about 8 MiB rather than 4 MiB; only the current
+slide and its replacement are decoded, and blurring still happens on the Mac.
+Compact decoding was observed to create visible bands in otherwise smooth JPEG
+backgrounds. Set `memories.color=compact` to restore the smaller color buffer.
+Home wallpapers already use full-color decoding.
+
 Use a dedicated private JSON configuration (mode 0600) with these keys:
 
 ```json
