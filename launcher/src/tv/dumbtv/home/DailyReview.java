@@ -22,8 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -168,8 +166,6 @@ public final class DailyReview extends Activity {
         content = new LinearLayout(this);
         LinearLayout left = column();
         left.addView(weatherCard(start, end), new LinearLayout.LayoutParams(MATCH, WRAP));
-        LinearLayout.LayoutParams workLp = new LinearLayout.LayoutParams(MATCH, WRAP); workLp.topMargin = dp(8);
-        left.addView(workCard(start, end), workLp);
         TextView hourlyTitle = label("Hourly forecast", 12, ACCENT); hourlyTitle.setPadding(dp(3), dp(10), 0, dp(5));
         left.addView(hourlyTitle);
         left.addView(hourly(start, end), new LinearLayout.LayoutParams(MATCH, 0, 1));
@@ -233,41 +229,6 @@ public final class DailyReview extends Activity {
         if (!weather.optString("error").isEmpty() || System.currentTimeMillis()-weather.optLong("fetchedAt") > 2*HOUR
                 || System.currentTimeMillis()-weather.optLong("hourlyIssuedAt") > 6*HOUR)
             addLine(box, "Saved forecast · check refresh time below", 11, 0xFFFFCA83);
-        focusLines(box); return box;
-    }
-
-    private void availabilityPart(LinearLayout bar, long duration, boolean busy) {
-        if (duration <= 0) return;
-        View segment = new View(this); segment.setBackgroundColor(busy ? 0xFFFFC18F : 0xFF91D8B7);
-        bar.addView(segment, new LinearLayout.LayoutParams(0, dp(8), (float)duration));
-    }
-
-    private LinearLayout workCard(long start, long end) {
-        LinearLayout box = card(); box.setPadding(dp(12), dp(10), dp(12), dp(10));
-        addLine(box, "Work calendar · 8 AM–6 PM", 11, ACCENT);
-        JSONObject calendar = object(data, "calendar"); boolean found = false;
-        for (JSONObject source : objects(calendar, "sources")) {
-            if (!source.optBoolean("busyOnly")) continue;
-            found = true;
-            if (!calendar.optString("error").isEmpty() || !source.optString("error").isEmpty() || source.optLong("fetchedAt") < System.currentTimeMillis()-2*HOUR)
-                addLine(box, "Saved availability · " + age(source.optLong("fetchedAt")), 10, 0xFFFFCA83);
-            if (source.optLong("fetchedAt") == 0 || start < calendar.optLong("start") || end > calendar.optLong("end")) {
-                addLine(box, "Availability unavailable", 12, MUTED); continue;
-            }
-            List<JSONObject> busy = new ArrayList<>();
-            for (JSONObject event : objects(source, "events")) if (overlaps(event, start, end)) busy.add(event);
-            Collections.sort(busy, Comparator.comparingLong(p -> p.optLong("start")));
-            Calendar working = Calendar.getInstance(zone); working.setTimeInMillis(start); working.set(Calendar.HOUR_OF_DAY, 8);
-            long a = working.getTimeInMillis(); working.set(Calendar.HOUR_OF_DAY, 18); long finish = working.getTimeInMillis();
-            LinearLayout bar = new LinearLayout(this);
-            for (JSONObject event : busy) {
-                long b = Math.max(a, event.optLong("start")), e = Math.min(finish, event.optLong("end"));
-                if (e <= a || b >= finish) continue;
-                availabilityPart(bar, b-a, false); availabilityPart(bar, e-b, true); a = Math.max(a, e);
-            }
-            availabilityPart(bar, finish-a, false); box.addView(bar, new LinearLayout.LayoutParams(MATCH, WRAP));
-        }
-        addLine(box, found ? "Green: available  ·  Amber: busy" : "Work calendar not loaded", 10, MUTED);
         focusLines(box); return box;
     }
 
