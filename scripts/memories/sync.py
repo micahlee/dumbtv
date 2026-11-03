@@ -5,6 +5,7 @@ import datetime as dt
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,33 @@ DATE = re.compile(r"((?:19|20)\d{2})[-_]?([01]\d)[-_]?([0-3]\d)")
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
 WALLPAPER = re.compile(r"recent_[0-9a-f]{16}\.jpg\Z")
 WALLPAPER_REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/wallpapers"
+CURATION_VERSION = 1
+
+
+def curation_record(data):
+    """Conservative people/place selection. Missing analysis is never eligibility proof."""
+    metrics = data.get("curation", {})
+    if not isinstance(metrics, dict) or metrics.get("version") != CURATION_VERSION:
+        raise RuntimeError("Photo eligibility analysis is missing")
+    for field in ["faces", "people", "textBlocks"]:
+        if type(metrics.get(field)) is not int or metrics[field] < 0:
+            raise RuntimeError("Photo eligibility analysis is invalid")
+    for field in ["sceneScore", "documentScore", "textCoverage"]:
+        value = metrics.get(field)
+        if not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 1:
+            raise RuntimeError("Photo eligibility analysis is invalid")
+    document, blocks, coverage = metrics["documentScore"], metrics["textBlocks"], metrics["textCoverage"]
+    if document >= 0.55 or (document >= 0.12 and blocks >= 6 and coverage >= 0.025):
+        eligible, reason = False, "document"
+    elif blocks >= 8 and coverage >= 0.12:
+        eligible, reason = False, "text-heavy"
+    elif metrics["faces"] or metrics["people"]:
+        eligible, reason = True, "people"
+    elif metrics["sceneScore"] >= 0.45:
+        eligible, reason = True, "place"
+    else:
+        eligible, reason = False, "uncertain-or-object"
+    return {"curationVersion": CURATION_VERSION, "eligible": eligible, "curationReason": reason}
 
 
 def filename_date(name):
@@ -121,29 +149,48 @@ def prepare_wallpapers(config, state, today):
     metadata_file = state / "wallpapers.json"
     metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
     frames, used = [], 0
+    curate = config.get("suitable_only", False)
+    stats = {"rejected": 0, "failures": 0, "complete": True}
+    seen = set()
     deadline = time.monotonic() + config.get("recent_budget_seconds", 120)
     for named_date, source in selected:
         if time.monotonic() > deadline:
+            stats["complete"] = False
             break
         info = source.stat()
         key = hashlib.sha256((str(source) + ":" + str(info.st_size) + ":"
                               + str(info.st_mtime_ns)).encode()).hexdigest()[:16]
         name = "recent_" + key + ".jpg"
+        seen.add(name)
         target = folder / name
-        if not target.is_file():
+        record = metadata.get(name, {})
+        checked = record.get("curationVersion") == CURATION_VERSION and type(record.get("eligible")) is bool
+        if curate and checked and not record["eligible"]:
+            stats["rejected"] += 1
+            continue
+        if not target.is_file() or (curate and not checked):
             temp = folder / (name + ".part")
             try:
-                result = subprocess.run([config["image_helper"], str(source), str(temp), "--wallpaper"],
+                arguments = [config["image_helper"], str(source), str(temp), "--wallpaper"]
+                if curate:
+                    arguments.append("--curate")
+                result = subprocess.run(arguments,
                                         capture_output=True, text=True, timeout=60)
                 if result.returncode:
-                    continue
+                    raise RuntimeError("Image conversion failed")
                 values = json.loads(result.stdout)
+                proof = curation_record(values) if curate else {}
+                if curate and not proof["eligible"]:
+                    metadata[name] = proof
+                    stats["rejected"] += 1
+                    continue
                 taken = dt.date.fromisoformat(values["taken"]) if values.get("taken") else named_date
                 if not 0 <= (today - taken).days < config.get("recent_days", 7):
                     continue
                 temp.replace(target)
-                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename"}
-            except (OSError, ValueError, subprocess.TimeoutExpired):
+                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename", **proof}
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+                stats["failures"] += 1
                 continue
             finally:
                 temp.unlink(missing_ok=True)
@@ -151,24 +198,25 @@ def prepare_wallpapers(config, state, today):
         if not 0 <= (today - taken).days < config.get("recent_days", 7):
             continue
         if used + target.stat().st_size > config.get("recent_max_bytes", 67108864):
+            stats["complete"] = False
             break
         used += target.stat().st_size
         frames.append(target)
-    if frames:
+    if frames or (curate and stats["complete"] and not stats["failures"]):
         # Bound the local rolling cache too, while preserving it on an empty refresh.
         current = {p.name for p in frames}
         for old in folder.iterdir():
             if WALLPAPER.fullmatch(old.name) and old.name not in current:
                 old.unlink()
-        metadata = {name: record for name, record in metadata.items() if name in current}
+        metadata = {name: record for name, record in metadata.items() if name in seen}
     temp = state / "wallpapers.json.next"
     temp.write_text(json.dumps(metadata, sort_keys=True))
     temp.replace(metadata_file)
-    return frames
+    return frames, stats
 
 
-def publish_wallpapers(adb, frames):
-    if not frames:
+def publish_wallpapers(adb, frames, clear_empty=False):
+    if not frames and not clear_empty:
         return  # Keep the last collection if there are no new eligible pictures.
     if any(not WALLPAPER.fullmatch(p.name) for p in frames):
         raise RuntimeError("Invalid wallpaper filename")
@@ -186,10 +234,10 @@ def publish_wallpapers(adb, frames):
         adb.call("shell", "rm -f " + " ".join(WALLPAPER_REMOTE + "/" + n for n in obsolete))
 
 
-def publish(adb, frames, index_path):
+def publish(adb, frames, index_path, allow_empty=False):
     """Every new image must exist before the atomic index replacement. No prune on failure."""
     names = [p.name for p in frames]
-    if not names or any(not NAME.fullmatch(n) for n in names):
+    if (not names and not allow_empty) or any(not NAME.fullmatch(n) for n in names):
         raise RuntimeError("Refusing an empty or invalid photo index")
     adb.call("shell", "mkdir -p " + REMOTE)
     listing = adb.call("shell", "ls -1 " + REMOTE).splitlines()
@@ -199,7 +247,7 @@ def publish(adb, frames, index_path):
         if photo.name not in existing:
             adb.call("push", str(photo), REMOTE + "/" + photo.name + ".part", timeout=60)
             adb.call("shell", "mv " + REMOTE + "/" + photo.name + ".part " + REMOTE + "/" + photo.name)
-    index_path.write_text("\n".join(names) + "\n")
+    index_path.write_text("\n".join(names) + "\n" if names else "")
     adb.call("push", str(index_path), REMOTE + "/index.txt.next")
     adb.call("shell", "mv " + REMOTE + "/index.txt.next " + REMOTE + "/index.txt")
     # Retain the prior generation too, so a running slideshow can finish its current read.
@@ -232,25 +280,40 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
         allowed = {(d.month, d.day) for d in
                    (today + dt.timedelta(days=i) for i in range(config.get("days_ahead", 7) + 1))}
-        frames, used, failures = [], 0, 0
+        frames, used, failures, rejected = [], 0, 0, 0
+        curate = config.get("suitable_only", False)
+        complete = True
         deadline = time.monotonic() + config.get("budget_seconds", 480)
         for _, path, named_date in selected:
             if time.monotonic() > deadline:
+                complete = False
                 break
             info = path.stat()
             key = hashlib.sha256((str(path) + ":" + str(info.st_size) + ":"
                                   + str(info.st_mtime_ns)).encode()).hexdigest()[:16]
             record = metadata.get(key, {})
+            checked = record.get("curationVersion") == CURATION_VERSION and type(record.get("eligible")) is bool
+            if curate and checked and not record["eligible"]:
+                rejected += 1
+                continue
             filename = record.get("file", "")
             photo = cache / filename
-            if not NAME.fullmatch(filename) or not photo.is_file():
+            if not NAME.fullmatch(filename) or not photo.is_file() or (curate and not checked):
                 temp = cache / (key + ".part.jpg")
                 try:
-                    result = subprocess.run([config["image_helper"], str(path), str(temp)],
+                    arguments = [config["image_helper"], str(path), str(temp)]
+                    if curate:
+                        arguments.append("--curate")
+                    result = subprocess.run(arguments,
                                             capture_output=True, text=True, timeout=60)
                     if result.returncode:
                         raise RuntimeError("Image conversion failed")
                     data = json.loads(result.stdout)
+                    proof = curation_record(data) if curate else {}
+                    if curate and not proof["eligible"]:
+                        metadata[key] = proof
+                        rejected += 1
+                        continue
                     taken = dt.date.fromisoformat(data["taken"]) if data.get("taken") else named_date
                     if (taken.month, taken.day) not in allowed or taken >= today:
                         continue
@@ -258,7 +321,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                     photo = cache / filename
                     temp.replace(photo)
                     metadata[key] = {"file": filename,
-                                     "dateSource": "EXIF" if data.get("taken") else "filename"}
+                                     "dateSource": "EXIF" if data.get("taken") else "filename", **proof}
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                     failures += 1
                     continue
@@ -266,18 +329,21 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                     temp.unlink(missing_ok=True)
             size = photo.stat().st_size
             if used + size > config.get("max_bytes", 134217728):
+                complete = False
                 break
             used += size
             frames.append(photo)
         metadata_tmp = state / "metadata.json.next"
         metadata_tmp.write_text(json.dumps(metadata, sort_keys=True))
         metadata_tmp.replace(metadata_file)
-        if not frames:
+        if not frames and (not curate or failures or not complete):
             raise RuntimeError("No eligible photos were prepared; preserving the TV cache")
         status = {"date": str(today), "photos": len(frames), "bytes": used,
-                  "conversionFailures": failures, "undatedSkipped": undated}
-        wallpapers = prepare_wallpapers(config, state, today) if config.get("recent_days", 0) else []
+                  "conversionFailures": failures, "undatedSkipped": undated, "photosRejected": rejected}
+        wallpapers, wallpaper_stats = prepare_wallpapers(config, state, today) if config.get("recent_days", 0) else ([], {})
         status["wallpapers"] = len(wallpapers)
+        status["wallpapersRejected"] = wallpaper_stats.get("rejected", 0)
+        status["wallpaperAnalysisFailures"] = wallpaper_stats.get("failures", 0)
         if prepare_only:
             status["status"] = "prepared"
         else:
@@ -285,8 +351,9 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             if not adb.connect():
                 status["status"] = "tv_offline"
             else:
-                retain = publish(adb, frames, state / "index.txt")
-                publish_wallpapers(adb, wallpapers)
+                retain = publish(adb, frames, state / "index.txt", allow_empty=curate and complete and not failures)
+                publish_wallpapers(adb, wallpapers, clear_empty=curate and wallpaper_stats.get("complete", False)
+                                   and not wallpaper_stats.get("failures"))
                 for old in cache.iterdir():
                     if NAME.fullmatch(old.name) and old.name not in retain:
                         old.unlink()

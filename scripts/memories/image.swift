@@ -2,9 +2,11 @@
 import Foundation
 import ImageIO
 import CoreGraphics
+import Vision
 
-guard CommandLine.arguments.count == 3 || (CommandLine.arguments.count == 4 && CommandLine.arguments[3] == "--wallpaper")
-else { fputs("usage: memory-image INPUT OUTPUT [--wallpaper]\n", stderr); exit(2) }
+let flags = Set(CommandLine.arguments.dropFirst(3))
+guard CommandLine.arguments.count >= 3 && flags.isSubset(of: ["--wallpaper", "--curate"])
+else { fputs("usage: memory-image INPUT OUTPUT [--wallpaper] [--curate]\n", stderr); exit(2) }
 let input = URL(fileURLWithPath: CommandLine.arguments[1])
 let output = URL(fileURLWithPath: CommandLine.arguments[2])
 guard let source = CGImageSourceCreateWithURL(input as CFURL, nil) else { exit(3) }
@@ -18,8 +20,34 @@ let options: [CFString: Any] = [
     kCGImageSourceShouldCacheImmediately: true
 ]
 guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { exit(4) }
+var curation: [String: Any]?
+if flags.contains("--curate") {
+    let labels = VNClassifyImageRequest(), faces = VNDetectFaceRectanglesRequest()
+    let people = VNDetectHumanRectanglesRequest(); people.upperBodyOnly = false
+    let text = VNRecognizeTextRequest(); text.recognitionLevel = .accurate
+    do { try VNImageRequestHandler(cgImage: thumbnail, options: [:]).perform([labels, faces, people, text]) }
+    catch { fputs("photo analysis failed\n", stderr); exit(7) }
+    let scenes: Set<String> = ["outdoor", "land", "water_body", "sky", "landscape", "scenery",
+        "mountain", "forest", "beach", "garden", "park", "building", "architecture", "city",
+        "urban", "street", "bridge", "landmark", "interior", "living_room", "bedroom",
+        "kitchen", "dining_room", "stadium", "seascape", "waterfall"]
+    let documents: Set<String> = ["document", "handwriting", "screenshot", "printed_page",
+        "receipt", "diagram", "chart"]
+    func score(_ identifiers: Set<String>) -> Float {
+        return (labels.results ?? []).filter { identifiers.contains($0.identifier) }
+            .map { $0.confidence }.max() ?? 0
+    }
+    let blocks = (text.results ?? []).filter { ($0.topCandidates(1).first?.confidence ?? 0) >= 0.3 }
+    // Presence and broad scene scores only: no identities, face embeddings or OCR strings leave Vision.
+    curation = ["version": 1,
+        "faces": (faces.results ?? []).filter { $0.confidence >= 0.6 }.count,
+        "people": (people.results ?? []).filter { $0.confidence >= 0.6 }.count,
+        "sceneScore": score(scenes), "documentScore": score(documents),
+        "textBlocks": blocks.count,
+        "textCoverage": min(1.0, blocks.reduce(0.0) { $0 + $1.boundingBox.width * $1.boundingBox.height })]
+}
 var image = thumbnail
-if CommandLine.arguments.count == 4 {
+if flags.contains("--wallpaper") {
     guard let color = CGColorSpace(name: CGColorSpace.sRGB),
           let canvas = CGContext(data: nil, width: 1920, height: 1080, bitsPerComponent: 8,
                                  bytesPerRow: 0, space: color,
@@ -38,6 +66,7 @@ guard let destination = CGImageDestinationCreateWithURL(output as CFURL, "public
 CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
 guard CGImageDestinationFinalize(destination) else { exit(5) }
 var json: [String: Any] = ["width": image.width, "height": image.height]
+if let curation = curation { json["curation"] = curation }
 if let taken = taken { json["taken"] = String(taken.prefix(10)).replacingOccurrences(of: ":", with: "-") }
 else { json["taken"] = NSNull() }
 guard let data = try? JSONSerialization.data(withJSONObject: json), let text = String(data: data, encoding: .utf8) else { exit(6) }
