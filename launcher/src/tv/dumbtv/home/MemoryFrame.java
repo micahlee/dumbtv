@@ -32,6 +32,7 @@ final class MemoryFrame extends FrameLayout {
     private final ImageView image;
     private final TextView clock, caption;
     private final File root;
+    private final boolean fullColor;
     private final Runnable tick = this::next;
     private boolean stopped;
     private String last;
@@ -39,6 +40,7 @@ final class MemoryFrame extends FrameLayout {
     MemoryFrame(Context c) {
         super(c);
         root = new File(Config.get(c).dir, "memories");
+        fullColor = "full".equals(Config.get(c).get("memories.color", "compact"));
         setBackgroundColor(0xFF000000);
         image = new ImageView(c);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -82,7 +84,7 @@ final class MemoryFrame extends FrameLayout {
                 if (bounds.outWidth <= 0 || bounds.outHeight <= 0
                         || bounds.outWidth > 4096 || bounds.outHeight > 4096) continue;
                 BitmapFactory.Options opts = new BitmapFactory.Options();
-                opts.inPreferredConfig = Bitmap.Config.RGB_565;
+                opts.inPreferredConfig = fullColor ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
                 opts.inSampleSize = 1;
                 while (bounds.outWidth / opts.inSampleSize > 1920
                         || bounds.outHeight / opts.inSampleSize > 1920) opts.inSampleSize *= 2;
