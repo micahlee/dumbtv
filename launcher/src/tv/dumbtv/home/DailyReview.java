@@ -5,6 +5,9 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.RelativeSizeSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -182,7 +185,7 @@ public final class DailyReview extends Activity {
         root.addView(tabs);
         content = new LinearLayout(this);
         LinearLayout left = column();
-        left.addView(scrolling(weatherCard(start, end)), new LinearLayout.LayoutParams(MATCH, 0, 1.1f));
+        left.addView(scrolling(weatherCard(start, end)), new LinearLayout.LayoutParams(MATCH, 0, 1.3f));
         LinearLayout.LayoutParams workLp = new LinearLayout.LayoutParams(MATCH, 0, 1); workLp.topMargin = dp(10);
         left.addView(scrolling(workCard(start, end)), workLp);
         LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, MATCH, .34f); leftLp.rightMargin = dp(14);
@@ -200,7 +203,7 @@ public final class DailyReview extends Activity {
         JSONObject weather = object(data, "weather"), calendar = object(data, "calendar");
         int errors = 0; for (JSONObject source : objects(calendar, "sources")) if (!source.optString("error").isEmpty()) errors++;
         String note = "Calendar checked " + age(calendar.optLong("checkedAt")) + "  ·  NWS forecast checked " + age(weather.optLong("fetchedAt"))
-                + "  ·  Hourly mini refresh";
+                + "  ·  Refreshes hourly";
         if (!calendar.optString("error").isEmpty() || errors > 0) note += "  ·  Calendar needs attention";
         if (!weather.optString("error").isEmpty()) note += "  ·  Weather refresh unavailable";
         if (cacheError) note += "  ·  Cache unavailable; last valid view retained";
@@ -217,12 +220,18 @@ public final class DailyReview extends Activity {
             if (p.optBoolean("day")) { high = p.optInt("temperature"); daily = p; }
             else { low = p.optInt("temperature"); if (daily == null) daily = p; }
         }
+        String range = "High " + (high == null ? "—" : high + "°") + "  Low " + (low == null ? "—" : low + "°");
         if (current != null) {
-            addLine(box, current.optInt("temperature") + "°F", 38, WHITE);
-            addLine(box, current.optString("condition"), 17, WHITE);
-            addLine(box, "Forecast · " + fmt(target, "h a") + "  |  Wind " + current.optString("wind"), 11, MUTED);
-        } else addLine(box, daily == null ? "Forecast unavailable for this time" : daily.optString("condition"), 16, MUTED);
-        addLine(box, "High " + (high == null ? "—" : high + "°") + "   Low " + (low == null ? "—" : low + "°"), 15, WHITE);
+            String temperature = current.optInt("temperature") + "°F";
+            SpannableString value = new SpannableString(temperature + "   " + range);
+            value.setSpan(new RelativeSizeSpan(.44f), temperature.length(), value.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            TextView heading = label("", 32, WHITE); heading.setText(value); heading.setPadding(0, 0, 0, dp(6)); box.addView(heading);
+            addLine(box, current.optString("condition"), 15, WHITE);
+            addLine(box, "Forecast · " + fmt(target, "h a") + "  |  Wind " + current.optString("wind"), 10, MUTED);
+        } else {
+            addLine(box, daily == null ? "Forecast unavailable for this time" : daily.optString("condition"), 16, MUTED);
+            addLine(box, range, 15, WHITE);
+        }
         if (weather.optLong("hourlyIssuedAt") > 0) addLine(box, "NWS issued " + age(weather.optLong("hourlyIssuedAt")), 10, MUTED);
         if (!weather.optString("error").isEmpty() || System.currentTimeMillis()-weather.optLong("fetchedAt") > 2*HOUR
                 || System.currentTimeMillis()-weather.optLong("hourlyIssuedAt") > 6*HOUR)
@@ -231,7 +240,7 @@ public final class DailyReview extends Activity {
     }
 
     private LinearLayout workCard(long start, long end) {
-        LinearLayout box = card(); addLine(box, "Work availability", 14, ACCENT);
+        LinearLayout box = card(); addLine(box, "Work calendar · 8 AM–6 PM", 12, ACCENT);
         JSONObject calendar = object(data, "calendar"); boolean found = false;
         for (JSONObject source : objects(calendar, "sources")) {
             if (!source.optBoolean("busyOnly")) continue;
@@ -247,7 +256,6 @@ public final class DailyReview extends Activity {
             Collections.sort(busy, Comparator.comparingLong(p -> p.optLong("start")));
             Calendar working = Calendar.getInstance(zone); working.setTimeInMillis(start); working.set(Calendar.HOUR_OF_DAY, 8);
             long a = working.getTimeInMillis(); working.set(Calendar.HOUR_OF_DAY, 18); long finish = working.getTimeInMillis();
-            addLine(box, "Calendar availability · 8 AM–6 PM", 10, MUTED);
             for (JSONObject event : busy) {
                 long b = Math.max(a, event.optLong("start")), e = Math.min(finish, event.optLong("end"));
                 if (e <= a || b >= finish) continue;
@@ -286,7 +294,7 @@ public final class DailyReview extends Activity {
             int allDay = Boolean.compare(b.optBoolean("allDay"), a.optBoolean("allDay"));
             return allDay != 0 ? allDay : Long.compare(a.optLong("start"), b.optLong("start"));
         });
-        addLine(list, sourceCount + " calendars · source labels on every event", 11, MUTED);
+        addLine(list, sourceCount + " calendars · Up/down to scroll", 11, MUTED);
         if (!calendar.optString("error").isEmpty()) addLine(list, calendar.optString("error"), 12, 0xFFFFCA83);
         if (warnings.length() > 0) addLine(list, warnings.toString(), 11, 0xFFFFCA83);
         if (start < calendar.optLong("start") || end > calendar.optLong("end"))
@@ -295,13 +303,14 @@ public final class DailyReview extends Activity {
                 : "No saved events for this day", 18, MUTED);
         for (JSONObject event : events) {
             LinearLayout row = card();
+            row.setPadding(dp(16), dp(8), dp(16), dp(8));
             String time = event.optBoolean("allDay") ? "ALL DAY" : fmt(Math.max(start, event.optLong("start")), "h:mm a")
                     + " – " + fmt(Math.min(end, event.optLong("end")), "h:mm a");
             int color = ACCENT;
             try { color = android.graphics.Color.parseColor(event.optString("color")); }
             catch (IllegalArgumentException ignored) { /* Untrusted provider color uses fallback. */ }
             addLine(row, time + "  ·  " + event.optString("source"), 12, color);
-            addLine(row, event.optString("title"), 18, WHITE);
+            addLine(row, event.optString("title"), 17, WHITE);
             if (!event.optString("location").isEmpty()) addLine(row, event.optString("location"), 12, MUTED);
             row.setFocusable(true); row.setContentDescription(time + ", " + event.optString("title") + ", " + event.optString("source"));
             row.setOnFocusChangeListener((view, focus) -> view.setBackground(Ui.round(focus ? 0xFF294463 : 0xFF15233A, dp(12))));

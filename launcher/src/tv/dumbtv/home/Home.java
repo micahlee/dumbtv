@@ -980,6 +980,12 @@ public final class Home extends Activity {
 
     private void open(Tile t) {
         if (Catalog.APPS.equals(t.kind)) {
+            if ("daily-review".equals(t.item.id)) {
+                // Like the built-in input screen, this belongs on our current task.
+                // RESET_TASK_IF_NEEDED would only bring Home forward and open nothing.
+                startActivity(new Intent(t.item.intent));
+                return;
+            }
             launch(new Intent(t.item.intent), t.item.id);
             return;
         }
