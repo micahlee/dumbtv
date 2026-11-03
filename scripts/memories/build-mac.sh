@@ -13,7 +13,10 @@ umask 077
 app="$destination/TV Memories.app"
 mkdir -p "$app/Contents/MacOS"
 target="$(uname -m)-apple-macos12.0"
-/usr/bin/swiftc -O -target "$target" scripts/memories/owner.swift -o "$app/Contents/MacOS/TVMemories"
+build_tmp=$(mktemp -d)
+trap 'rm -rf "$build_tmp"' EXIT
+cp scripts/memories/owner.swift "$build_tmp/main.swift"
+/usr/bin/swiftc -O -target "$target" "$build_tmp/main.swift" scripts/memories/ReviewLaunch.swift scripts/memories/ReviewDevice.swift -o "$app/Contents/MacOS/TVMemories"
 /usr/bin/swiftc -O -target "$target" scripts/memories/image.swift -o "$destination/memory-image"
 cp scripts/memories/Info.plist "$app/Contents/Info.plist"
 cp scripts/memories/sync.py "$destination/sync.py"

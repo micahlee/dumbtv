@@ -15,6 +15,8 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
     private var connection: NWConnection?
     private var timer: Timer?
     private var retryTimer: Timer?
+    private var commandTimer: DispatchSourceTimer?
+    private let commandQueue = DispatchQueue(label: "tv.dumbtv.review.commands")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -33,6 +35,19 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
             status.title = "Photo setup is incomplete"; return
         }
         config = parsed
+        if let control = config["review_control"] as? [String: Any], control["enabled"] as? Bool == true,
+           let owner = control["owner"] as? String, !owner.isEmpty {
+            let directory = root.appendingPathComponent("review-commands")
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            let device = ReviewDevice(config: config) { [weak self] in
+                DispatchQueue.main.sync { self?.ensureServer() ?? false }
+            }
+            let receiver = ReviewCommandQueue(directory: directory, owner: owner, perform: device.open)
+            let timer = DispatchSource.makeTimerSource(queue: commandQueue)
+            timer.schedule(deadline: .now(), repeating: 0.25)
+            timer.setEventHandler { receiver.poll() }
+            commandTimer = timer; timer.resume()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.refreshNow()
         }
@@ -96,8 +111,8 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
         return handle
     }
 
-    private func startServerAndRefresh() {
-        guard let adb = config["adb"] as? String else { return }
+    private func ensureServer() -> Bool {
+        guard let adb = config["adb"] as? String else { return false }
         if server?.isRunning != true {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: adb)
@@ -106,8 +121,13 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
             process.standardOutput = log("adb-server.log")
             process.standardError = process.standardOutput
             do { try process.run(); server = process }
-            catch { status.title = "TV connection helper could not start"; return }
+            catch { status.title = "TV connection helper could not start"; return false }
         }
+        return true
+    }
+
+    private func startServerAndRefresh() {
+        guard ensureServer() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.runRefresh() }
     }
 
@@ -145,6 +165,7 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
     @objc private func quitOwner() { NSApplication.shared.terminate(nil) }
     func applicationWillTerminate(_ notification: Notification) {
         connection?.cancel(); timer?.invalidate(); retryTimer?.invalidate()
+        commandTimer?.cancel()
         if sync?.isRunning == true { sync?.terminate() }
         if server?.isRunning == true { server?.terminate() }
     }
