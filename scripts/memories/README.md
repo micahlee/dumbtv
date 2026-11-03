@@ -31,6 +31,27 @@ retries while the TV is unavailable. Its app identity provides macOS's normal
 Local Network consent flow; no privacy databases or protections are changed.
 The TV plays its own cache even if the Mac is unavailable.
 
+### People and places, rather than utility images
+
+Set `suitable_only` to `true` to require local Apple Vision analysis for **both**
+photo streams. The mini detects person/face presence and broad scenery/place
+categories, and rejects documents, handwritten notes, screenshots, text-heavy
+images and uncertain/object-only images. It does not identify people. No face
+embeddings, names or recognized text strings are saved or sent to another service.
+OneDrive originals are never changed.
+
+Versioned decisions are cached against each source's path, size and modification
+time. Legacy converted pictures without a decision are rechecked before reuse;
+missing or failed analysis never counts as approval. A fully analyzed empty
+collection may clear the managed TV collection, leaving a plain home/clock.
+An unavailable source, interrupted analysis or failed copy preserves the last
+valid collection. Classification is conservative and uncertain pictures are skipped.
+
+When enabling this on an existing unfiltered installation, pause the owner and
+hide/park the old photo display until the curated collection has been published.
+The publish step removes obsolete generated wallpapers; it preserves user-added
+wallpapers. The slideshow activates only the newly curated index.
+
 ### Recent photos behind the app chooser
 
 Set `recent_days` to `7` in the Mac configuration to also prepare photos taken
@@ -57,6 +78,7 @@ Use a dedicated private JSON configuration (mode 0600) with these keys:
   "image_helper": "/absolute/path/to/memory-image",
   "adb": "/absolute/path/to/adb",
   "adb_port": 5038,
+  "suitable_only": true,
   "device": "TV_HOST:5555"
 }
 ```
@@ -66,6 +88,12 @@ The hostname check prevents accidentally moving the job to a different Mac.
 Build installable Mac artifacts with `scripts/memories/build-mac.sh OUTPUT`.
 The script fetches and enforces clean `origin/main` before building. The app's
 menu provides refresh status, **Refresh now**, and **Quit until next login**.
+macOS can request both Local Network permission and permission to read
+OneDrive-managed files for this native app; these are separate normal prompts.
+For a fixed-address TV, the owning LaunchAgent may set `ADB_MDNS=0` in its
+`EnvironmentVariables` to avoid unnecessary discovery. This also avoids a
+reproduced ADB 37 discovery-parser crash on one Mac/LAN; direct authenticated
+TCP connections still work. See [ADB's discovery switch](https://android.googlesource.com/platform/packages/modules/adb/+/45c08c5130b7f5f8787c0c226e72eb0d3a7f7f45/client/main.cpp).
 Run `python3 scripts/memories/sync.py --config CONFIG --dry-run` first;
 `--prepare-only` creates the Mac cache without contacting the TV.
 

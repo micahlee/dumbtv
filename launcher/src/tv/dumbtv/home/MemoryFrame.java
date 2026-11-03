@@ -101,6 +101,9 @@ final class MemoryFrame extends FrameLayout {
                         caption.setText("Memories · " + new SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(date.getTime()));
                     }
                 } else caption.setText("Photos will appear after the next refresh");
+                // FIT_CENTER can invalidate only the photo rectangle. Redraw the full frame
+                // so text over black letterbox bars survives portrait/landscape transitions.
+                invalidate();
                 ui.postDelayed(tick, 15000);
             });
         });
