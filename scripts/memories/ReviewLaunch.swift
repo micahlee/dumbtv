@@ -87,7 +87,11 @@ final class ReviewCommandQueue {
                   !FileManager.default.fileExists(atPath: result.path) else { continue }
             // No other consumer owns this private directory. The retained claim
             // is durable before any LAN or ADB effect is allowed.
-            guard rename(file.path, working.path) == 0 else { continue }
+            // link is exclusive: even a second accidentally launched consumer
+            // cannot replace another consumer's retained claim.
+            guard link(file.path, working.path) == 0 else { continue }
+            guard syncDirectory() else { finish(command, status: "uncertain"); continue }
+            _ = unlink(file.path)
             guard syncDirectory() else { finish(command, status: "uncertain"); continue }
             guard command.live(at: now()) else { finish(command, status: "expired"); continue }
             let outcome = perform(command)
