@@ -239,7 +239,10 @@ def prepare(config, state, today, limit=None):
             key = hashlib.sha256((graph.drive + ':' + item['id'] + ':' + item['eTag']).encode()).hexdigest()[:16]
             target = folder / (str(captured(item)) + '_' + key + TYPES[item['file']['mimeType']])
             if not target.exists() or target.stat().st_size != size:
-                live = graph.get(BASE + 'me/drive/items/' + quote(item['id'], safe='') + '?$select=id,eTag,size,@microsoft.graph.downloadUrl')
+                # Personal OneDrive can omit downloadUrl when a $select projection
+                # is present. Fetch this selected item's full metadata, keeping
+                # only its version/size and transient download URL in memory.
+                live = graph.get(BASE + 'me/drive/items/' + quote(item['id'], safe=''))
                 if live.get('eTag') != item.get('eTag') or live.get('size') != size:
                     raise RuntimeError('OneDrive photo changed during refresh; TV cache retained')
                 download(live.get('@microsoft.graph.downloadUrl', ''), target, size, deadline)
