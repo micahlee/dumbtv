@@ -1,5 +1,5 @@
 // A login-session application gives macOS a stable identity for local-network consent.
-// It owns the foreground ADB server and hourly sync; no laptop or cloud tokens are involved.
+// It owns the foreground ADB server and hourly sync on the configured Mac.
 import AppKit
 import Foundation
 import Network
@@ -78,7 +78,8 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
                 check?.stateUpdateHandler = nil; check?.cancel()
                 self.connection = nil
                 self.status.title = "TV unavailable or network access needed"
-                if !denied { self.scheduleRetry() }
+                if self.usesCloudPhotos { self.startServerAndRefresh() }
+                else if !denied { self.scheduleRetry() }
             default: break
             }
         }
@@ -89,9 +90,12 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
             check?.stateUpdateHandler = nil; check?.cancel(); self.connection = nil
             self.status.title = denied ? "Allow Local Network, then choose Refresh now"
                 : "TV asleep; cached photos remain available"
-            if !denied { self.scheduleRetry() }
+            if self.usesCloudPhotos { self.startServerAndRefresh() }
+            else if !denied { self.scheduleRetry() }
         }
     }
+
+    private var usesCloudPhotos: Bool { config["photo_source"] as? String == "onedrive-api" }
 
     private func scheduleRetry() {
         retryTimer?.invalidate()

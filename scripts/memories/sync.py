@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh an offline TV photo cache from a local OneDrive mirror. No cloud credentials."""
+"""Refresh an offline TV photo cache from OneDrive Graph or an explicit local source."""
 import argparse
 import datetime as dt
 import fcntl
@@ -177,10 +177,11 @@ def recent_candidates(sources, today, days=7, limit=30):
     return sorted(selected, key=lambda p: (p[0], str(p[1])), reverse=True)[:limit]
 
 
-def prepare_wallpapers(config, state, today):
+def prepare_wallpapers(config, state, today, selected=None):
     frame_fill(config)
-    selected = recent_candidates(config["sources"], today, config.get("recent_days", 7),
-                                 config.get("recent_limit", 30))
+    if selected is None:
+        selected = recent_candidates(config["sources"], today, config.get("recent_days", 7),
+                                     config.get("recent_limit", 30))
     folder = state / "wallpapers"
     folder.mkdir(exist_ok=True)
     metadata_file = state / "wallpapers.json"
@@ -221,7 +222,7 @@ def prepare_wallpapers(config, state, today):
                 if not 0 <= (today - taken).days < config.get("recent_days", 7):
                     continue
                 temp.replace(target)
-                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else "filename", **proof, **rendering}
+                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else config.get("_photo_date_source", "filename"), **proof, **rendering}
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                 stats["failures"] += 1
                 continue
@@ -296,18 +297,33 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         raise RuntimeError("This refresh is configured for a different Mac")
     frame_fill(config)
     today = dt.date.today()
-    selected, undated = candidates(config["sources"], today,
-                                   config.get("days_ahead", 7), config.get("per_day", 40),
-                                   limit or config.get("max_photos", 240))
-    if dry_run:
-        return {"selected": len(selected), "undatedSkipped": undated, "date": str(today)}
+    source = config.get("photo_source", "local")
+    if source not in ("local", "onedrive-api"):
+        raise RuntimeError("Unknown photo source")
+    selected, recent, source_status = [], None, {}
     state = Path(config["state_dir"]).expanduser()
+    if source == "local":
+        selected, undated = candidates(config["sources"], today,
+                                       config.get("days_ahead", 7), config.get("per_day", 40),
+                                       limit or config.get("max_photos", 240))
+    if dry_run:
+        if source == "onedrive-api":
+            import onedrive
+            index = state / "onedrive-index.json"
+            if not index.exists():
+                return {"source": source, "status": "cloud_index_not_prepared", "date": str(today)}
+            selected, recent, undated = onedrive.select_photos(json.loads(index.read_text())["items"], today, config, limit)
+        return {"selected": len(selected), "undatedSkipped": undated, "date": str(today), "source": source}
     state.mkdir(parents=True, exist_ok=True)
     with (state / "refresh.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {"status": "already_running"}
+        if source == "onedrive-api":
+            import onedrive
+            selected, recent, undated, source_status = onedrive.prepare(config, state, today, limit)
+            config = {**config, "_photo_date_source": "OneDrive photo API"}
         cache = state / "frames"
         cache.mkdir(exist_ok=True)
         metadata_file = state / "metadata.json"
@@ -351,7 +367,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                     photo = cache / filename
                     temp.replace(photo)
                     metadata[key] = {"file": filename,
-                                     "dateSource": "EXIF" if data.get("taken") else "filename", **proof, **rendering}
+                                     "dateSource": "EXIF" if data.get("taken") else config.get("_photo_date_source", "filename"), **proof, **rendering}
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                     failures += 1
                     continue
@@ -370,8 +386,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             raise RuntimeError("No eligible photos were prepared; preserving the TV cache")
         status = {"date": str(today), "photos": len(frames), "bytes": used,
                   "conversionFailures": failures, "undatedSkipped": undated, "photosRejected": rejected,
-                  "frameFill": frame_fill(config)}
-        wallpapers, wallpaper_stats = prepare_wallpapers(config, state, today) if config.get("recent_days", 0) else ([], {})
+                  "frameFill": frame_fill(config), **source_status}
+        wallpapers, wallpaper_stats = prepare_wallpapers(config, state, today, recent) if config.get("recent_days", 0) else ([], {})
         status["wallpapers"] = len(wallpapers)
         status["wallpapersRejected"] = wallpaper_stats.get("rejected", 0)
         status["wallpaperAnalysisFailures"] = wallpaper_stats.get("failures", 0)

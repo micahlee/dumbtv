@@ -16,18 +16,34 @@ cropping and change every 15 seconds; a clock and capture year/date are overlaid
 
 ## Mac refresh owner
 
-`sync.py` reads a local OneDrive photo mirror. It does not receive Microsoft tokens,
-publish photos, or modify the OneDrive originals. Its filename-date prefilter avoids
-downloading an entire cloud library. `image.swift` uses macOS ImageIO to prefer the
-actual EXIF capture date, respect orientation, and produce JPEGs up to 1920 pixels
-on the long edge. GPS and camera metadata are omitted from the TV copies. Photos
-without dated filenames are skipped in this initial version.
+Set `photo_source` to `"onedrive-api"` to read personal OneDrive directly through
+Microsoft Graph. The Mini keeps a private metadata index using the paginated
+drive delta API, then downloads only selected anniversary and recent photos into
+its own bounded rendering cache. Capture dates come from the Graph **photo**
+facet, with EXIF checked during rendering; upload dates and source filenames are
+not used to decide when a cloud photo was taken. Photos without a capture date
+are skipped. Landscape memories get selection priority and portraits remain
+eligible. The source never reads the synced OneDrive directory or falls back to it.
+
+Microsoft Graph PowerShell owns the read-only `Files.Read` sign-in, token refresh
+and macOS Keychain cache on the Mini. No client registration or secret is needed.
+Only API GET operations are used. Cloud originals are never modified. No tokens,
+download URLs or source names are written into ordinary logs or copied to the TV.
+An interrupted metadata page or download preserves the last TV collection. The
+index binds to the original drive so switching Microsoft accounts requires review.
+`image.swift` uses macOS ImageIO to respect orientation and render JPEGs, omitting
+GPS and camera metadata from TV copies.
+
+The legacy local-folder source remains available with `photo_source: "local"`
+(the compatibility default) and `sources: ["/absolute/photo/folder"]`. Only that
+mode uses dated filenames as a prefilter. An API failure never activates it.
 
 The default cache covers today and seven upcoming days, with at most 240 photos
 and 128 MiB per active generation. The prior generation is retained for safe
 transition. Every file is copied before an atomic photo-index replacement; a failed
-copy, unavailable OneDrive folder, or empty refresh preserves the previous TV index.
-The refresh never wakes a sleeping TV. The native **TV Memories** login-session
+copy, unavailable photo source, or incomplete refresh preserves the previous TV index.
+The refresh never wakes a sleeping TV. Cloud photos can be prepared while the TV
+is unavailable; publication waits until it can be reached. The native **TV Memories** login-session
 app owns a loopback-only ADB server on port 5038 and an hourly refresh, with quiet
 retries while the TV is unavailable. Its app identity provides macOS's normal
 Local Network consent flow; no privacy databases or protections are changed.
@@ -59,7 +75,7 @@ wallpapers. The slideshow activates only the newly curated index.
 Set `recent_days` to `7` in the Mac configuration to also prepare photos taken
 today or during the preceding six days. This uses the actual recent date, rather
 than the anniversary filter used by the idle slideshow. EXIF capture dates
-override dated filenames. The initial version skips photos without dated filenames.
+are checked against the API capture date (or dated filename in legacy local mode).
 Up to 30 recent pictures (64 MiB) are prepared, with a separate two-minute budget.
 They are fitted onto a 1920×1080 black canvas so portraits remain uncropped.
 Only generated `recent_*.jpg` files in the launcher's own `files/wallpapers/`
@@ -98,7 +114,13 @@ Use a dedicated private JSON configuration (mode 0600) with these keys:
 ```json
 {
   "owner_host": "the-exact-hostname-of-the-refresh-Mac",
-  "sources": ["/absolute/path/to/OneDrive/Photos/Camera Roll"],
+  "photo_source": "onedrive-api",
+  "onedrive": {
+    "pwsh": "/absolute/path/to/pwsh",
+    "budget_seconds": 600,
+    "max_photo_bytes": 67108864,
+    "max_cache_bytes": 1073741824
+  },
   "state_dir": "/absolute/path/to/private/cache",
   "image_helper": "/absolute/path/to/memory-image",
   "adb": "/absolute/path/to/adb",
@@ -109,13 +131,35 @@ Use a dedicated private JSON configuration (mode 0600) with these keys:
 }
 ```
 
+Install PowerShell from Microsoft's official distribution and install only the
+`Microsoft.Graph.Authentication` module version `2.41.2` for the refresh account.
+Sign in **inside the Mini's GUI login session**, using
+`pwsh -NoLogo -NoProfile -File /absolute/path/to/graph.ps1 -SignIn`.
+Review the personal-account read-only consent on Microsoft's displayed login page.
+Explicit setup allows 15 minutes to complete sign-in. It uses the SDK's public
+credential API with persistent storage and the normal personal-account token
+profile. It does not use the higher-level connect path's temporary-storage fallback.
+An SSH-only login can lack Keychain access even when the desktop is unlocked.
+For a .NET-tool installation of PowerShell, set `onedrive.dotnet_root` to the
+installed .NET runtime directory if the login environment does not provide it.
+Scheduled refreshes reuse that cache and fail quietly if sign-in is required;
+they never display a browser or renew consent automatically. Graph's photo facet
+does not provide the people/place classification needed here, so Apple Vision
+continues to filter documents and other unsuitable images locally.
+
+The first refresh enumerates photo metadata across the drive; subsequent runs
+fetch changes. A failed page does not commit a partial index. Expired delta tokens
+trigger a full rebuild. The default cloud-original cache is bounded to 1 GiB and
+64 MiB per photo; only the selected originals are retained after a successful
+preparation. The TV continues to use its existing smaller JPEG cache.
+
 Do not commit this configuration, photo indexes, photos, ADB keys, or job logs.
 The hostname check prevents accidentally moving the job to a different Mac.
 Build installable Mac artifacts with `scripts/memories/build-mac.sh OUTPUT`.
 The script fetches and enforces clean `origin/main` before building. The app's
 menu provides refresh status, **Refresh now**, and **Quit until next login**.
-macOS can request both Local Network permission and permission to read
-OneDrive-managed files for this native app; these are separate normal prompts.
+macOS requests Local Network permission for this native app. The API source
+does not require access to OneDrive-managed local files.
 For a fixed-address TV, the owning LaunchAgent may set `ADB_MDNS=0` in its
 `EnvironmentVariables` to avoid unnecessary discovery. This also avoids a
 reproduced ADB 37 discovery-parser crash on one Mac/LAN; direct authenticated
