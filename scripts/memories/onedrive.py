@@ -38,7 +38,11 @@ class Graph:
         bridge = Path(__file__).with_name('graph.ps1')
         environment = os.environ.copy()
         if settings.get('dotnet_root'):
-            environment['DOTNET_ROOT'] = settings['dotnet_root']
+            runtime = str(Path(settings['dotnet_root']).expanduser())
+            environment['DOTNET_ROOT'] = runtime
+            # The PowerShell global-tool shim starts its own dotnet child by
+            # name. A GUI login agent normally has only the system PATH.
+            environment['PATH'] = runtime + os.pathsep + environment.get('PATH', os.defpath)
         self.process = subprocess.Popen([str(Path(settings['pwsh']).expanduser()), '-NoLogo', '-NoProfile',
                                          '-NonInteractive', '-File', str(bridge)],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -50,7 +54,7 @@ class Graph:
             self.drive = ready['drive']
         except (RuntimeError, ValueError):
             self.close()
-            raise RuntimeError('OneDrive sign-in required; preserving the TV cache') from None
+            raise RuntimeError('OneDrive photo provider could not start; preserving the TV cache') from None
 
     def read(self, timeout):
         with selectors.DefaultSelector() as selector:
