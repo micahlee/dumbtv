@@ -36,7 +36,17 @@ def image_cache_key(source, config):
     material = str(source) + ":" + str(info.st_size) + ":" + str(info.st_mtime_ns)
     if frame_fill(config) == "blur":
         material += ":" + BLUR_RENDER_VERSION
+    if config.get("photo_source") == "onedrive-api":
+        material += ":onedrive-capture-v1"
     return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+def capture_date(config, values, selected_date):
+    if config.get("photo_source") == "onedrive-api":
+        return selected_date, "OneDrive photo API"
+    if values.get("taken"):
+        return dt.date.fromisoformat(values["taken"]), "EXIF"
+    return selected_date, "filename"
 
 
 def image_arguments(config, source, target, wallpaper=False):
@@ -218,11 +228,11 @@ def prepare_wallpapers(config, state, today, selected=None):
                     metadata[name] = proof
                     stats["rejected"] += 1
                     continue
-                taken = dt.date.fromisoformat(values["taken"]) if values.get("taken") else named_date
+                taken, date_source = capture_date(config, values, named_date)
                 if not 0 <= (today - taken).days < config.get("recent_days", 7):
                     continue
                 temp.replace(target)
-                metadata[name] = {"taken": str(taken), "dateSource": "EXIF" if values.get("taken") else config.get("_photo_date_source", "filename"), **proof, **rendering}
+                metadata[name] = {"taken": str(taken), "dateSource": date_source, **proof, **rendering}
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                 stats["failures"] += 1
                 continue
@@ -323,7 +333,6 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         if source == "onedrive-api":
             import onedrive
             selected, recent, undated, source_status = onedrive.prepare(config, state, today, limit)
-            config = {**config, "_photo_date_source": "OneDrive photo API"}
         cache = state / "frames"
         cache.mkdir(exist_ok=True)
         metadata_file = state / "metadata.json"
@@ -360,14 +369,14 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                         metadata[key] = proof
                         rejected += 1
                         continue
-                    taken = dt.date.fromisoformat(data["taken"]) if data.get("taken") else named_date
+                    taken, date_source = capture_date(config, data, named_date)
                     if (taken.month, taken.day) not in allowed or taken >= today:
                         continue
                     filename = str(taken) + "_" + key + ".jpg"
                     photo = cache / filename
                     temp.replace(photo)
                     metadata[key] = {"file": filename,
-                                     "dateSource": "EXIF" if data.get("taken") else config.get("_photo_date_source", "filename"), **proof, **rendering}
+                                     "dateSource": date_source, **proof, **rendering}
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
                     failures += 1
                     continue

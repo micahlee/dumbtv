@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -44,6 +45,40 @@ class FakeGraph:
 
 
 class OneDrivePhotoTests(unittest.TestCase):
+    def test_cloud_capture_dates_override_embedded_dates_and_recheck_old_cache(self):
+        today = dt.date.today()
+        anniversary = today.replace(year=2000)
+        for embedded in ['2019--1-01', str(today.replace(year=2016))]:
+            with self.subTest(embedded=embedded), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); state = root / 'state'; state.mkdir()
+                memory = root / 'camera.jpg'; memory.write_bytes(b'original')
+                recent = root / 'recent.jpg'; recent.write_bytes(b'original')
+                config = dict(owner_host=socket.gethostname(), state_dir=str(state), photo_source='onedrive-api',
+                              frame_fill='blur', suitable_only=True, days_ahead=0, recent_days=7, image_helper='fixture')
+                old_key = sync.image_cache_key(memory, {'frame_fill': 'blur'})
+                old_name = str(today.replace(year=2016)) + '_' + old_key + '.jpg'
+                (state / 'frames').mkdir(); (state / 'frames' / old_name).write_bytes(b'old frame')
+                (state / 'metadata.json').write_text(json.dumps({old_key: dict(file=old_name, dateSource='EXIF',
+                                                                           eligible=True, curationVersion=1)}))
+                def helper(args, **kwargs):
+                    Path(args[2]).write_bytes(b'new frame')
+                    value = dict(taken=embedded, width=1920, height=1080, frameFill='blur', sourceWidth=900,
+                                 sourceHeight=1200, curation=dict(version=1, faces=1, people=1, textBlocks=0,
+                                 sceneScore=0, documentScore=0, textCoverage=0))
+                    return subprocess.CompletedProcess(args, 0, json.dumps(value), '')
+                prepared = ([('fixture', memory, anniversary)], [(today, recent)], 0, {'source': 'onedrive-api'})
+                with patch.dict(sys.modules, onedrive=cloud), patch.object(cloud, 'prepare', return_value=prepared), \
+                     patch.object(sync.subprocess, 'run', side_effect=helper):
+                    result = sync.refresh(config, prepare_only=True)
+                self.assertEqual((result['photos'], result['wallpapers'], result['conversionFailures']), (1, 1, 0))
+                records = json.loads((state / 'metadata.json').read_text())
+                record = records[sync.image_cache_key(memory, config)]
+                self.assertTrue(record['file'].startswith(str(anniversary) + '_'))
+                self.assertEqual(record['dateSource'], 'OneDrive photo API')
+                wallpaper = next(iter(json.loads((state / 'wallpapers.json').read_text()).values()))
+                self.assertEqual(wallpaper['taken'], str(today))
+                self.assertEqual(wallpaper['dateSource'], 'OneDrive photo API')
+
     def test_dotnet_tool_starts_with_the_minimal_login_agent_path(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); runtime = root / 'runtime'; runtime.mkdir()
