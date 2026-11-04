@@ -3,6 +3,7 @@ import datetime as dt
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -43,6 +44,24 @@ class FakeGraph:
 
 
 class OneDrivePhotoTests(unittest.TestCase):
+    def test_dotnet_tool_starts_with_the_minimal_login_agent_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); runtime = root / 'runtime'; runtime.mkdir()
+            shim = root / 'pwsh'
+            # The vendor's .NET tool shim starts a child named dotnet. GUI jobs
+            # do not inherit a Homebrew path, even when the shim path is absolute.
+            shim.write_text('#!/bin/sh\nexec dotnet "$@"\n')
+            dotnet = runtime / 'dotnet'
+            dotnet.write_text('#!/bin/sh\necho \'{"ready":true,"drive":"fixture"}\'\n'
+                              'while IFS= read -r request; do echo \'{"data":{"probe":true}}\'; done\n')
+            shim.chmod(0o700); dotnet.chmod(0o700)
+            with patch.dict(os.environ, PATH='/usr/bin:/bin'):
+                graph = cloud.Graph({'pwsh': str(shim), 'dotnet_root': str(runtime)})
+                try:
+                    self.assertTrue(graph.get(cloud.BASE + 'me/drive')['probe'])
+                finally:
+                    graph.close()
+
     def test_complete_delta_uses_last_occurrence_and_deletions(self):
         pages = [{'value': [photo('a'), photo('gone')], '@odata.nextLink': cloud.BASE + 'next?opaque=a%2Fb'},
                  {'value': [photo('a', '2021-11-04T12:00:00Z'), {'id': 'gone', 'deleted': {}}],

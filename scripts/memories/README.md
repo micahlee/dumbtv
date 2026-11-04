@@ -141,7 +141,9 @@ credential API with persistent storage and the normal personal-account token
 profile. It does not use the higher-level connect path's temporary-storage fallback.
 An SSH-only login can lack Keychain access even when the desktop is unlocked.
 For a .NET-tool installation of PowerShell, set `onedrive.dotnet_root` to the
-installed .NET runtime directory if the login environment does not provide it.
+installed .NET runtime directory containing `dotnet`. The child process receives
+both `DOTNET_ROOT` and this directory on its own `PATH`, so the tool shim works
+with the minimal environment supplied to a GUI login agent.
 Scheduled refreshes reuse that cache and fail quietly if sign-in is required;
 they never display a browser or renew consent automatically. Graph's photo facet
 does not provide the people/place classification needed here, so Apple Vision
