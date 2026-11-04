@@ -20,7 +20,7 @@ Set `photo_source` to `"onedrive-api"` to read personal OneDrive directly throug
 Microsoft Graph. The Mini keeps a private metadata index using the paginated
 drive delta API, then downloads only selected anniversary and recent photos into
 its own bounded rendering cache. Capture dates come from the Graph **photo**
-facet, with EXIF checked during rendering; upload dates and source filenames are
+facet and remain authoritative during rendering; upload dates and source filenames are
 not used to decide when a cloud photo was taken. Photos without a capture date
 are skipped. Landscape memories get selection priority and portraits remain
 eligible. The source never reads the synced OneDrive directory or falls back to it.
@@ -75,7 +75,9 @@ wallpapers. The slideshow activates only the newly curated index.
 Set `recent_days` to `7` in the Mac configuration to also prepare photos taken
 today or during the preceding six days. This uses the actual recent date, rather
 than the anniversary filter used by the idle slideshow. EXIF capture dates
-are checked against the API capture date (or dated filename in legacy local mode).
+override dated filenames in legacy local mode. API mode retains the Graph capture
+date even when embedded EXIF dates are malformed or disagree. Versioned render
+keys recheck earlier cloud-cache entries made under the EXIF date policy.
 Up to 30 recent pictures (64 MiB) are prepared, with a separate two-minute budget.
 They are fitted onto a 1920×1080 black canvas so portraits remain uncropped.
 Only generated `recent_*.jpg` files in the launcher's own `files/wallpapers/`
