@@ -154,6 +154,18 @@ class OneDrivePhotoTests(unittest.TestCase):
             self.assertEqual(downloads.call_count, 2)
             self.assertEqual(len(list((Path(directory) / 'cloud-originals').iterdir())), 2)
 
+    def test_missing_download_annotation_keeps_original_cache_unmodified(self):
+        graph = FakeGraph([{'value': [photo('memory')], '@odata.deltaLink': cloud.BASE + 'delta?ready'},
+                           {'id': 'memory', 'size': 4, 'eTag': 'v1'}])
+        with tempfile.TemporaryDirectory() as directory, patch.object(cloud, 'Graph', return_value=graph):
+            state = Path(directory)
+            folder = state / 'cloud-originals'; folder.mkdir()
+            prior = folder / 'previous.jpg'; prior.write_bytes(b'old')
+            with self.assertRaises(cloud.GraphError):
+                cloud.prepare(dict(onedrive={'pwsh': 'fixture'}, days_ahead=0), state, dt.date(2026, 11, 4))
+            self.assertEqual(prior.read_bytes(), b'old')
+            self.assertEqual(list(folder.iterdir()), [prior])
+
     def test_api_failure_never_falls_back_to_local_folder_or_publishes(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, onedrive=cloud), \
              patch.object(cloud, 'prepare', side_effect=cloud.GraphError()), \
