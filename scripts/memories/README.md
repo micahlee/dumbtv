@@ -16,6 +16,33 @@ cropping and change every 15 seconds; a clock and capture year/date are overlaid
 
 ## Mac refresh owner
 
+### Collages and duplicate photos
+
+Set `photo_collages` to `true` in the Mini configuration to build 1920×1080 JPEG
+collages before transfer. This requires `suitable_only: true`. Existing people/
+place filtering runs on each original first. The native `memory-collage` helper
+then fingerprints eligible originals, removes exact files and normalized-pixel
+copies, and conservatively matches re-encodes using aspect ratio, a difference
+hash and a strict color-layout comparison. It does not broadly merge photos of
+the same people or place. Heavily edited/cropped copies may remain distinct.
+Fingerprints and source paths remain private on the Mini; only JPEG pages and
+the safe slideshow index reach the TV.
+
+Each distinct selected photo appears once per collection. Balanced pages contain
+two to four photos; a leftover slot is never filled by repeating a photo. Each
+photo stays complete over its own blurred fill, with its actual capture year
+(or recent date) drawn on the Mini. Anniversary pages never mix different month/
+days or label a mixed-year collage as a single year. A pool with fewer than two
+unique eligible photos has no collage page; Daily Review stays on its dashboard
+when there are no collage pages. The same processing applies to recent wallpapers.
+
+Failed analysis/rendering never publishes a partial collage collection. Content-
+addressed pages and fingerprint decisions are reused; successful refreshes bound
+the working cache to current photos/pages and the published generation. The
+originals are read-only. Disable `photo_collages` and refresh to restore individual
+photos. The build script includes the helper and Python module, with no additional
+runtime packages, online image service or new Microsoft sign-in.
+
 Set `photo_source` to `"onedrive-api"` to read personal OneDrive directly through
 Microsoft Graph. The Mini keeps a private metadata index using the paginated
 drive delta API, then downloads only selected anniversary and recent photos into

@@ -19,7 +19,6 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -35,10 +34,30 @@ final class MemoryFrame extends FrameLayout {
     private final boolean fullColor;
     private final Runnable tick = this::next;
     private boolean stopped;
-    private String last;
+    private final MemoryDeck deck;
+    private final boolean collagesOnly;
+    private final Runnable unavailable;
 
     MemoryFrame(Context c) {
+        this(c, new MemoryDeck(), false, null);
+    }
+
+    static boolean hasCollages(Context c) {
+        File directory = new File(Config.get(c).dir, "memories");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(new File(directory, "index.txt")), StandardCharsets.UTF_8))) {
+            for (int i = 0; i < 1000; i++) {
+                String line = reader.readLine(); if (line == null) break;
+                MemoryDates.Photo photo = MemoryDates.parse(line.trim());
+                if (photo != null && photo.collage && new File(directory, photo.file).isFile()) return true;
+            }
+        } catch (java.io.IOException ignored) { /* Stay on review until a usable cache arrives. */ }
+        return false;
+    }
+
+    MemoryFrame(Context c, MemoryDeck deck, boolean collagesOnly, Runnable unavailable) {
         super(c);
+        this.deck = deck; this.collagesOnly = collagesOnly; this.unavailable = unavailable;
         root = new File(Config.get(c).dir, "memories");
         fullColor = "full".equals(Config.get(c).get("memories.color", "compact"));
         setBackgroundColor(0xFF000000);
@@ -67,13 +86,12 @@ final class MemoryFrame extends FrameLayout {
                     new FileInputStream(index), StandardCharsets.UTF_8))) {
                 for (String line; (line = r.readLine()) != null && all.size() < 1000;) {
                     MemoryDates.Photo photo = MemoryDates.parse(line.trim());
-                    if (photo != null && new File(root, photo.file).isFile()) all.add(photo);
+                    if (photo != null && (!collagesOnly || photo.collage)
+                            && new File(root, photo.file).isFile()) all.add(photo);
                 }
             } catch (java.io.IOException ignored) { /* Keep the clock if refresh has not arrived. */ }
             Calendar today = Calendar.getInstance();
-            List<MemoryDates.Photo> photos = MemoryDates.choose(all, today);
-            Collections.shuffle(photos);
-            if (photos.size() > 1 && photos.get(0).file.equals(last)) Collections.swap(photos, 0, 1);
+            List<MemoryDates.Photo> photos = deck.order(MemoryDates.choose(all, today));
             Bitmap bitmap = null;
             MemoryDates.Photo selected = null;
             for (MemoryDates.Photo photo : photos) {
@@ -82,7 +100,7 @@ final class MemoryFrame extends FrameLayout {
                 String path = new File(root, photo.file).getPath();
                 BitmapFactory.decodeFile(path, bounds);
                 if (bounds.outWidth <= 0 || bounds.outHeight <= 0
-                        || bounds.outWidth > 4096 || bounds.outHeight > 4096) continue;
+                        || bounds.outWidth > 4096 || bounds.outHeight > 4096) { deck.skip(photo.file); continue; }
                 BitmapFactory.Options opts = new BitmapFactory.Options();
                 opts.inPreferredConfig = fullColor ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
                 opts.inSampleSize = 1;
@@ -90,19 +108,25 @@ final class MemoryFrame extends FrameLayout {
                         || bounds.outHeight / opts.inSampleSize > 1920) opts.inSampleSize *= 2;
                 bitmap = BitmapFactory.decodeFile(path, opts);
                 if (bitmap != null) { selected = photo; break; }
+                deck.skip(photo.file);
             }
             final Bitmap ready = bitmap;
             final MemoryDates.Photo photo = selected;
             ui.post(() -> {
                 if (stopped) return;
                 if (photo != null) {
-                    image.setImageBitmap(ready); last = photo.file;
-                    if (MemoryDates.onThisDay(photo, today)) caption.setText("On this day · " + photo.year);
+                    image.setImageBitmap(ready); deck.shown(photo.file);
+                    if (MemoryDates.onThisDay(photo, today)) caption.setText(photo.collage
+                            ? "On this day · Photo memories" : "On this day · " + photo.year);
                     else {
                         Calendar date = Calendar.getInstance(); date.set(photo.year, photo.month - 1, photo.day);
-                        caption.setText("Memories · " + new SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(date.getTime()));
+                        caption.setText("Memories · " + new SimpleDateFormat(photo.collage ? "MMMM d" : "MMMM d, yyyy",
+                                Locale.getDefault()).format(date.getTime()));
                     }
-                } else caption.setText("Photos will appear after the next refresh");
+                } else {
+                    caption.setText("Photos will appear after the next refresh");
+                    if (unavailable != null) { unavailable.run(); return; }
+                }
                 // FIT_CENTER can invalidate only the photo rectangle. Redraw the full frame
                 // so text over black letterbox bars survives portrait/landscape transitions.
                 invalidate();

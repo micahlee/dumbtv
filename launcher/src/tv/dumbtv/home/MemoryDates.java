@@ -10,13 +10,15 @@ final class MemoryDates {
     static final class Photo {
         final String file;
         final int year, month, day;
+        final boolean collage;
         Photo(String file, int year, int month, int day) {
             this.file = file; this.year = year; this.month = month; this.day = day;
+            this.collage = file.endsWith("_c.jpg");
         }
     }
 
     static Photo parse(String line) {
-        if (!line.matches("(?:19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9a-f]{16}\\.jpg")) return null;
+        if (!line.matches("(?:19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}_[0-9a-f]{16}(?:_c)?\\.jpg")) return null;
         int year = Integer.parseInt(line.substring(0, 4));
         int month = Integer.parseInt(line.substring(5, 7));
         int day = Integer.parseInt(line.substring(8, 10));
