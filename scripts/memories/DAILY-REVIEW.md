@@ -131,3 +131,34 @@ Provider contracts:
 [Google event listing](https://developers.google.com/workspace/calendar/api/v3/reference/events/list),
 [Google FreeBusy](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query),
 [NWS weather API](https://www.weather.gov/documentation/services-web-api).
+
+### WYFF video rotation (opt-in)
+
+Enable `weather_video: {"enabled": true}` in the private Mini configuration and
+`review.weather_video=on` in TV `home.conf`. The loop becomes:
+
+1. Daily Review: three minutes, with remote input restarting its reading interval.
+2. Slideshow: 45 seconds, using the existing shared no-repeat page deck.
+3. Latest fresh WYFF forecast: the full clip, always starting muted.
+4. Slideshow: another 45 seconds, continuing that same deck.
+5. Return to Daily Review and repeat.
+
+OK/Enter or clicking the video's sound control toggles its own audio. It never
+changes system volume. Back/other navigation returns to Daily Review and consumes
+the press; Home/power remain system-owned and volume controls remain available.
+Leaving the activity, losing the video surface, decode failure or the bounded
+watchdog releases the player. Audio focus loss remutes; a new clip always starts
+muted and never restores sound automatically. Missing/stale clips are skipped.
+When the weather opt-in is off, the original review/photos/review loop is retained.
+
+The Mini reads WYFF's dedicated weather lead and its matching videocast article,
+not the mixed YouTube upload feed. It selects a complete H.264 MP4 up to 720p,
+10–600 seconds and 96 MiB. It verifies bounded HTTPS responses and transfer hashes
+before atomically publishing an immutable filename and small manifest. Clips
+expire 12 hours after the video's original creation time; refreshing metadata does
+not extend expiry. No credentials or network permission are added to the TV.
+The existing native owner checks for a newer forecast at startup and every hour,
+independently of OneDrive photo processing. An unchanged clip is reused. Sleeping TVs are
+never woken for routine refresh. Offline playback uses the last valid cache;
+expired or failed media returns to the remaining loop. The station's page data
+is not a documented API: format/source ambiguity retains the previous cache.

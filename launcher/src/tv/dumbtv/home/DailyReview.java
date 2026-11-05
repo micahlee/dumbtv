@@ -50,15 +50,18 @@ public final class DailyReview extends Activity {
     private MemoryFrame photoFrame;
     private View dashboardFocus;
     private final MemoryDeck photoDeck = new MemoryDeck();
-    private ReviewInterlude interlude;
+    private ReviewRotation interlude;
+    private WeatherVideoFrame videoFrame;
+    private boolean weatherEnabled, photosEnabled;
+    private int shownPhase = ReviewRotation.REVIEW;
     private boolean pendingRender;
     private int consumedPhotoKey = KeyEvent.KEYCODE_UNKNOWN;
     private final Runnable cycle = new Runnable() {
         @Override public void run() {
             if (!resumed || interlude == null) return;
-            if (interlude.tick(SystemClock.uptimeMillis(), MemoryFrame.hasCollages(DailyReview.this))) {
-                if (photoFrame == null) showPhotos();
-            } else stopPhotos(true);
+            int phase = interlude.tick(SystemClock.uptimeMillis(), (photosEnabled && MemoryFrame.hasCollages(DailyReview.this)),
+                    weatherEnabled && readClip() != null);
+            showPhase(phase);
             handler.removeCallbacks(this);
             handler.postDelayed(this, interlude.delay(SystemClock.uptimeMillis()));
         }
@@ -67,7 +70,7 @@ public final class DailyReview extends Activity {
         @Override public void run() {
             long today = dayStart(System.currentTimeMillis());
             boolean changed = load() || today != shownDay || System.currentTimeMillis()/HOUR != shownHour;
-            if (photoFrame != null) pendingRender |= changed;
+            if (photoFrame != null || videoFrame != null) pendingRender |= changed;
             else if (changed || pendingRender) { pendingRender = false; render(); }
             else updateFooter();
             handler.postDelayed(this, 60000);
@@ -87,10 +90,11 @@ public final class DailyReview extends Activity {
         if (!"on".equals(cfg.get("review.enabled", "off"))) { finish(); return; }
         // The external launcher can reuse this task. Re-read opt-ins and timing
         // on every resume instead of retaining a previous invocation's settings.
-        interlude = "on".equals(cfg.get("review.photos", "off"))
-                && "on".equals(cfg.get("memories.enabled", "off"))
-                ? new ReviewInterlude(seconds(cfg, "review.photo_interval_seconds", 180, 15, 3600),
-                    seconds(cfg, "review.photo_duration_seconds", 45, 5, 180)) : null;
+        weatherEnabled = "on".equals(cfg.get("review.weather_video", "off"));
+        photosEnabled = "on".equals(cfg.get("review.photos", "off")) && "on".equals(cfg.get("memories.enabled", "off"));
+        interlude = (photosEnabled || weatherEnabled)
+                ? new ReviewRotation(seconds(cfg, "review.photo_interval_seconds", 180, 15, 3600),
+                    seconds(cfg, "review.photo_duration_seconds", 45, 5, 180), weatherEnabled) : null;
         if (!isFinishing()) {
             handler.post(poll);
             if (agendaScroll != null) agendaScroll.setActive(true);
@@ -101,7 +105,7 @@ public final class DailyReview extends Activity {
         resumed = false; handler.removeCallbacks(poll); handler.removeCallbacks(cycle);
         consumedPhotoKey = KeyEvent.KEYCODE_UNKNOWN;
         if (interlude != null) interlude.pause();
-        stopPhotos(false);
+        showPhase(ReviewRotation.REVIEW);
         if (agendaScroll != null) agendaScroll.setActive(false);
         super.onPause();
     }
@@ -112,11 +116,20 @@ public final class DailyReview extends Activity {
             return true;
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
-            boolean wasPhotos = photoFrame != null;
+            if (videoFrame != null) {
+                if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
+                        || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                    if (event.getRepeatCount() == 0) videoFrame.toggleSound();
+                    consumedPhotoKey = code; return true;
+                }
+                // Sound remains muted until an explicit OK; hardware volume never changes that gate.
+                if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN
+                        || code == KeyEvent.KEYCODE_VOLUME_MUTE) return super.dispatchKeyEvent(event);
+            }
+            boolean wasMedia = photoFrame != null || videoFrame != null;
             if (interlude != null) { interlude.interact(SystemClock.uptimeMillis()); schedulePhotos(); }
-            if (wasPhotos) {
-                stopPhotos(true);
-                // Home/power remain system-owned. Volume still works while returning to review.
+            if (wasMedia) {
+                showPhase(ReviewRotation.REVIEW);
                 if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN
                         && code != KeyEvent.KEYCODE_VOLUME_MUTE && code != KeyEvent.KEYCODE_POWER
                         && code != KeyEvent.KEYCODE_HOME) { consumedPhotoKey = code; return true; }
@@ -135,24 +148,61 @@ public final class DailyReview extends Activity {
         handler.removeCallbacks(cycle);
         if (resumed && interlude != null) handler.postDelayed(cycle, interlude.delay(SystemClock.uptimeMillis()));
     }
-    private void showPhotos() {
-        dashboardFocus = getCurrentFocus();
-        agendaScroll.setActive(false); root.setVisibility(View.INVISIBLE);
-        photoFrame = new MemoryFrame(this, photoDeck, true, () -> {
-            if (interlude != null) interlude.interact(SystemClock.uptimeMillis());
-            stopPhotos(true); schedulePhotos();
-        });
-        stage.addView(photoFrame, new FrameLayout.LayoutParams(MATCH, MATCH));
+    private ForecastClip readClip() {
+        if (!weatherEnabled) return null;
+        File directory = new File(Config.get(this).dir, "weather-video");
+        File manifest = new File(directory, "forecast.json");
+        if (!manifest.isFile() || manifest.length() > 8192) return null;
+        try (FileInputStream input = new FileInputStream(manifest);
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[1024]; int n;
+            while ((n = input.read(buffer)) != -1) {
+                if (out.size() + n > 8192) return null;
+                out.write(buffer, 0, n);
+            }
+            JSONObject value = new JSONObject(new String(out.toByteArray(), StandardCharsets.UTF_8));
+            String name = value.optString("file"), title = value.optString("title");
+            long published = value.optLong("publishedAt"), expires = value.optLong("expiresAt"), size = value.optLong("bytes");
+            if (value.optInt("version") != 1 || !ForecastClip.valid(name, value.optString("source"), title,
+                    published, expires, System.currentTimeMillis(), value.optLong("durationSeconds"), size)) return null;
+            File file = new File(directory, name);
+            if (!file.isFile() || file.length() != size || !file.getCanonicalFile().getParentFile().equals(directory.getCanonicalFile())) return null;
+            return new ForecastClip(file, title, published, expires);
+        } catch (IOException | JSONException ignored) { return null; }
     }
-    private void stopPhotos(boolean restoreFocus) {
-        if (photoFrame == null) return;
-        photoFrame.stop(); stage.removeView(photoFrame); photoFrame = null;
-        root.setVisibility(View.VISIBLE);
-        if (pendingRender && resumed) { pendingRender = false; render(); }
-        else {
-            if (restoreFocus && dashboardFocus != null) dashboardFocus.requestFocus();
-            if (agendaScroll != null) agendaScroll.setActive(resumed);
+    private void showPhase(int phase) {
+        if (phase == shownPhase) return;
+        if (shownPhase == ReviewRotation.REVIEW) dashboardFocus = getCurrentFocus();
+        if (photoFrame != null) { photoFrame.stop(); stage.removeView(photoFrame); photoFrame = null; }
+        if (videoFrame != null) { videoFrame.stop(); stage.removeView(videoFrame); videoFrame = null; }
+        shownPhase = phase;
+        if (phase == ReviewRotation.REVIEW) {
+            root.setVisibility(View.VISIBLE);
+            if (pendingRender && resumed) { pendingRender = false; render(); }
+            else {
+                if (resumed && dashboardFocus != null) dashboardFocus.requestFocus();
+                if (agendaScroll != null) agendaScroll.setActive(resumed);
+            }
+            return;
         }
+        agendaScroll.setActive(false); root.setVisibility(View.INVISIBLE);
+        if (phase == ReviewRotation.VIDEO) {
+            ForecastClip clip = readClip();
+            if (clip == null) { handler.post(this::videoFinished); return; }
+            videoFrame = new WeatherVideoFrame(this, clip, this::videoFinished);
+            stage.addView(videoFrame, new FrameLayout.LayoutParams(MATCH, MATCH));
+        } else {
+            photoFrame = new MemoryFrame(this, photoDeck, true, () -> {
+                if (!resumed || interlude == null) return;
+                interlude.interact(SystemClock.uptimeMillis()); showPhase(ReviewRotation.REVIEW); schedulePhotos();
+            });
+            stage.addView(photoFrame, new FrameLayout.LayoutParams(MATCH, MATCH));
+        }
+    }
+    private void videoFinished() {
+        if (!resumed || interlude == null || shownPhase != ReviewRotation.VIDEO) return;
+        interlude.videoFinished(SystemClock.uptimeMillis(), (photosEnabled && MemoryFrame.hasCollages(this)));
+        showPhase(interlude.phase()); schedulePhotos();
     }
 
     private boolean load() {
