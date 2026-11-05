@@ -184,6 +184,36 @@ class PhotoCollageTest(unittest.TestCase):
                 config['photo_orientation_overrides']=bad
                 with self.assertRaises(RuntimeError):collages.prepare(config,state,entries,'memories')
 
+    def test_varied_pages_have_distinct_years_and_never_repeat_a_source(self):
+        def entry(year,i):return dict(taken=dt.date(year,11,5),sourceSHA256=str(year)+'-'+str(i),
+                                     proof=dict(curationReason='people'),fingerprint=fp())
+        import random
+        rng=random.Random(17)
+        for _ in range(250):
+            values=[entry(2000+y,i) for y in range(rng.randint(2,12)) for i in range(rng.randint(1,20))]
+            pages=collages.varied_groups(values)
+            members=[p['sourceSHA256'] for page in pages for p in page]
+            self.assertEqual(len(members),len(set(members)))
+            for page in pages:
+                self.assertTrue(2<=len(page)<=4)
+                self.assertEqual(len({p['taken'].year for p in page}),len(page))
+            # Every year participates even when one album is much larger.
+            self.assertEqual({p['taken'].year for page in pages for p in page},{p['taken'].year for p in values})
+
+    def test_dominant_year_surplus_is_deferred_instead_of_creating_homogeneous_pages(self):
+        values=[dict(taken=dt.date(2010,11,5),sourceSHA256=str(i),proof={},fingerprint=fp()) for i in range(50)]
+        values.extend(dict(taken=dt.date(2022,11,5),sourceSHA256='b'+str(i),proof={},fingerprint=fp()) for i in range(3))
+        pages=collages.varied_groups(values)
+        self.assertEqual(len(pages),3);self.assertEqual([len(p) for p in pages],[2,2,2])
+        self.assertTrue(all({p['taken'].year for p in page}=={2010,2022} for page in pages))
+
+    def test_one_year_fallback_spreads_scene_types_without_identity_claims(self):
+        values=[dict(taken=dt.date(2010,11,5),sourceSHA256=str(i),proof=dict(curationReason=reason),
+                     fingerprint=fp(color=i*20)) for i,reason in enumerate(['people']*4+['place']*4)]
+        pages=collages.varied_groups(values)
+        self.assertEqual(sum(map(len,pages)),8)
+        self.assertTrue(all({p['proof']['curationReason'] for p in page}=={'people','place'} for page in pages))
+
 
 @unittest.skipUnless(sys.platform=='darwin' and shutil.which('swiftc'), 'macOS native renderer')
 class NativeCollageTest(unittest.TestCase):

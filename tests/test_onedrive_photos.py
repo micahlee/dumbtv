@@ -163,6 +163,30 @@ class OneDrivePhotoTests(unittest.TestCase):
         self.assertGreater(sum(counts), 1200)
         self.assertLess(sum(counts), 1800)
 
+    def test_diversity_rebalances_large_sessions_across_years_without_orientation_bias(self):
+        values=[photo('session'+str(i),'2010-11-04T10:00:00Z') for i in range(510)]
+        for year in range(2014,2024):
+            values.extend(photo(str(year)+'-'+str(i),str(year)+'-11-04T12:00:00Z') for i in range(8))
+        config=dict(days_ahead=0,max_photos=30,photo_diversity=True)
+        def select(items,day=dt.date(2026,11,4)):
+            return cloud.select_photos({p['id']:p for p in items},day,config)[0]
+        selected=select(values)
+        self.assertEqual(len(selected),30)
+        counts={year:sum(cloud.captured(p).year==year for p in selected) for year in [2010,*range(2014,2024)]}
+        self.assertEqual(len(counts),11);self.assertTrue(all(2<=v<=3 for v in counts.values()))
+        self.assertEqual([p['id'] for p in selected],[p['id'] for p in select(list(reversed(values)))])
+        changed=[dict(p,image=dict(width=800,height=1200)) for p in values]
+        self.assertEqual([p['id'] for p in selected],[p['id'] for p in select(changed)])
+        self.assertNotEqual([p['id'] for p in selected],[p['id'] for p in select(values,dt.date(2027,11,4))])
+
+    def test_diversity_spreads_capture_sessions_within_a_year(self):
+        values=[photo('burst'+str(i),'2010-11-04T10:00:00Z') for i in range(500)]
+        values.extend(photo('other'+str(i),'2010-11-04T18:00:00Z') for i in range(4))
+        selected,_,_=cloud.select_photos({p['id']:p for p in values},dt.date(2026,11,4),
+                                         dict(days_ahead=0,max_photos=8,photo_diversity=True))
+        self.assertEqual(sum(p['id'].startswith('other') for p in selected),4)
+        self.assertEqual(len({p['id'] for p in selected}),8)
+
     def test_new_year_and_leap_day_selection(self):
         values = [photo('end', '2020-12-31T12:00:00Z'), photo('next', '2026-01-01T12:00:00Z'), photo('leap', '2024-02-29T12:00:00Z')]
         items = {x['id']: x for x in values}
