@@ -22,8 +22,12 @@ drive delta API, then downloads only selected anniversary and recent photos into
 its own bounded rendering cache. Capture dates come from the Graph **photo**
 facet and remain authoritative during rendering; upload dates and source filenames are
 not used to decide when a cloud photo was taken. Photos without a capture date
-are skipped. Landscape memories get selection priority and portraits remain
-eligible. The source never reads the synced OneDrive directory or falls back to it.
+are skipped. Anniversary candidates use an equal daily pseudorandom ranking,
+without orientation preference or year quotas. The ranking stays stable through
+hourly refreshes and changes with the current date. The configured candidate cap
+applies before people/place filtering, so the published count can be smaller;
+rejected candidates are never displayed. The source never reads the synced
+OneDrive directory or falls back to it.
 
 Microsoft Graph PowerShell owns the read-only `Files.Read` sign-in, token refresh
 and macOS Keychain cache on the Mini. No client registration or secret is needed.

@@ -167,16 +167,18 @@ def select_photos(items, today, config, limit=None):
         key = hashlib.sha256(item['id'].encode()).hexdigest()
         for i, day in enumerate(dates):
             if (taken.month, taken.day) == (day.month, day.day) and taken.year < day.year:
-                image = item.get('image') or {}
-                landscape = (image.get('width') or 0) >= (image.get('height') or 1)
-                buckets[i].append((not landscape, key, item))
+                # A daily pseudorandom rank gives every matching photo the same
+                # chance, independent of orientation/year and Graph page order.
+                # Keep it stable across hourly refreshes to avoid cache churn.
+                rank = hashlib.sha256((str(today) + ':' + item['id']).encode()).hexdigest()
+                buckets[i].append((rank, item))
                 break
         if 0 <= (today - taken).days < config.get('recent_days', 0):
             recent.append((taken, key, item))
     chosen = []
     for i, bucket in enumerate(buckets):
-        chosen.extend(sorted(bucket, key=lambda x: x[:2])[:max(config.get('per_day', 40), 80) if i == 0 else config.get('per_day', 40)])
-    memories = [item for _, _, item in chosen[:limit or config.get('max_photos', 240)]]
+        chosen.extend(sorted(bucket, key=lambda x: x[0])[:max(config.get('per_day', 40), 80) if i == 0 else config.get('per_day', 40)])
+    memories = [item for _, item in chosen[:limit or config.get('max_photos', 240)]]
     recent.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return memories, [item for _, _, item in recent[:config.get('recent_limit', 30)]], undated
 
