@@ -38,7 +38,11 @@ filenames, links and copyright strings are discarded; missing captions use just
 the date. Page titles use shared capture dates, never guessed names or occasions.
 For rotation tags 3/6/8, the Mini can correct stale EXIF only when strong upright
 face-pose evidence supports the raw pixels and the metadata transform does not.
-No clear evidence means metadata wins; mirrored tags are preserved. No face
+No clear evidence means metadata wins; mirrored tags are preserved. For a visually
+reviewed exception, `photo_orientation_overrides` maps the original file's SHA256
+to `pixels` or `metadata` in the private Mini configuration. It affects only that
+exact file, recomputes its fingerprint and page, and removal restores automatic
+analysis. Never publish personal photo hashes or apply a batch-wide guess. No face
 identities or pose observations are retained. Versioned analysis/page keys rebuild
 older grid pages once. Original files remain read-only. Anniversary pages never mix
 different month/days or label a mixed-year collage as a single year. A pool with fewer than two

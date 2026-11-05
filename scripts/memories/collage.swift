@@ -67,11 +67,13 @@ func text(_ string: String, font: String, size: CGFloat, color: CGColor, at poin
     canvas.textMatrix = .identity; canvas.textPosition = point; CTLineDraw(value, canvas); canvas.restoreGState()
 }
 let args = CommandLine.arguments
-if args.count == 3 && args[1] == "--fingerprint" {
+if [3, 4].contains(args.count) && args[1] == "--fingerprint" {
+    let reviewed = args.count == 4 ? args[3] : "automatic"
+    guard ["automatic", "metadata", "pixels"].contains(reviewed) else { fail() }
     let props = properties(args[2])
     let tag = (props[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
-    var mode = "metadata"
-    if [3, 6, 8].contains(tag) {
+    var mode = reviewed == "pixels" ? "pixels" : "metadata"
+    if reviewed == "automatic" && [3, 6, 8].contains(tag) {
         mode = orientationMode(tag:tag, raw:poses(thumbnail(args[2], maximum:1200, mode:"pixels")),
                                metadata:poses(thumbnail(args[2], maximum:1200)))
     }
