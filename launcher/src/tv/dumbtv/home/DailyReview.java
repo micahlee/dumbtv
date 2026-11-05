@@ -5,11 +5,12 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -42,6 +43,8 @@ public final class DailyReview extends Activity {
     private boolean cacheError;
     private LinearLayout root, content;
     private TextView footer;
+    private AgendaScrollView agendaScroll;
+    private boolean resumed;
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             long today = dayStart(System.currentTimeMillis());
@@ -56,10 +59,26 @@ public final class DailyReview extends Activity {
         super.onCreate(state);
         Config cfg = Config.get(this); cfg.refresh();
         if (!"on".equals(cfg.get("review.enabled", "off"))) { finish(); return; }
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         load(); render();
     }
-    @Override protected void onResume() { super.onResume(); if (!isFinishing()) handler.post(poll); }
-    @Override protected void onPause() { handler.removeCallbacks(poll); super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume(); resumed = true;
+        if (!isFinishing()) {
+            handler.post(poll);
+            if (agendaScroll != null) agendaScroll.setActive(true);
+        }
+    }
+    @Override protected void onPause() {
+        resumed = false; handler.removeCallbacks(poll);
+        if (agendaScroll != null) agendaScroll.setActive(false);
+        super.onPause();
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN && agendaScroll != null)
+            agendaScroll.manualInteraction();
+        return super.dispatchKeyEvent(event);
+    }
 
     private boolean load() {
         File file = new File(Config.get(this).dir, "review/review.json");
@@ -145,13 +164,14 @@ public final class DailyReview extends Activity {
             line.setOnFocusChangeListener((v, focused) -> v.setBackground(Ui.round(focused ? 0xFF294463 : 0x00000000, dp(4))));
         }
     }
-    private ScrollView scrolling(LinearLayout child) {
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(false); scroll.setFocusable(false);
+    private AgendaScrollView scrolling(LinearLayout child) {
+        AgendaScrollView scroll = new AgendaScrollView(this); scroll.setFillViewport(false); scroll.setFocusable(false);
         scroll.setClipToPadding(false); scroll.setPadding(dp(3), dp(3), dp(3), dp(8));
         scroll.addView(child, new FrameLayout.LayoutParams(MATCH, WRAP)); return scroll;
     }
 
     private void render() {
+        if (agendaScroll != null) agendaScroll.setActive(false);
         shownDay = dayStart(System.currentTimeMillis());
         shownHour = System.currentTimeMillis()/HOUR;
         long start = shownDay, end = plusDays(start, 1);
@@ -172,7 +192,8 @@ public final class DailyReview extends Activity {
         LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(0, MATCH, .28f); leftLp.rightMargin = dp(16);
         content.addView(left, leftLp);
         LinearLayout agenda = agenda(start, end);
-        content.addView(scrolling(agenda), new LinearLayout.LayoutParams(0, MATCH, .72f));
+        agendaScroll = scrolling(agenda);
+        content.addView(agendaScroll, new LinearLayout.LayoutParams(0, MATCH, .72f));
         LinearLayout.LayoutParams bodyLp = new LinearLayout.LayoutParams(MATCH, 0, 1); bodyLp.topMargin = dp(12);
         root.addView(content, bodyLp);
         footer = label("", 10, MUTED); footer.setPadding(0, dp(8), 0, 0);
@@ -182,6 +203,7 @@ public final class DailyReview extends Activity {
         for (int i=0; i<agenda.getChildCount(); i++) if (agenda.getChildAt(i).isFocusable()) {
             agenda.getChildAt(i).requestFocus(); break;
         }
+        agendaScroll.setActive(resumed);
     }
 
     private void updateFooter() {
