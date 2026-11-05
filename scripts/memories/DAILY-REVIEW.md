@@ -4,8 +4,16 @@ An opt-in native tile in the existing launcher, with no Android network or
 calendar permission. It shows today's weather, an hourly forecast sidebar,
 and a full-height composite agenda for today. There is no day-navigation bar.
 The header is a single compact line and event rows put times beside titles to
-fit more of the day at a glance. Unusually busy days can still scroll. Source labels and
-colors distinguish family, subscribed sports, on-call, personal and work inputs.
+fit more of the day at a glance. An overflowing agenda scrolls automatically at
+14 density-independent pixels per second, pauses five seconds at each end, then
+reverses. It stays still when the full day fits. Remote or touch input pauses the
+motion for ten seconds; ordinary manual scrolling still works. Motion stops when
+Daily Review leaves the foreground and restarts with a reading pause on return.
+Its visible window keeps the screen awake while the dashboard is being read.
+Leaving Daily Review restores ordinary TV idle/screensaver behavior; no global
+idle or sleep timeout is changed.
+Source labels and colors distinguish family, subscribed sports, on-call,
+personal and work inputs.
 The calendar's display titles are preserved. Free/busy-only calendars use the
 FreeBusy API and never invent meeting titles. Work busy intervals appear in the
 agenda alongside other events. There is no separate work-availability strip;
@@ -21,7 +29,7 @@ chance. The calendar keeps its full height and width. Actual elapsed time sets
 horizontal spacing; missing intervals break the line rather than interpolating.
 Unknown precipitation is displayed as unknown, not zero. Flat, single-point and
 unavailable forecasts have explicit safe display behavior. No image downloads,
-chart libraries, animations, new permissions or Mini/provider changes are needed.
+chart libraries, new permissions or Mini/provider changes are needed.
 
 ## Mini configuration
 
