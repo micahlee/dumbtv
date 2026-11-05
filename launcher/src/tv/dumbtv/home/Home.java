@@ -55,6 +55,7 @@ public final class Home extends Activity {
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private final ReviewLaunch reviewLaunch = new ReviewLaunch();
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final ExecutorService colorIo = Executors.newSingleThreadExecutor();
     private final List<TextView> chips = new ArrayList<>();
@@ -79,6 +80,13 @@ public final class Home extends Activity {
     private ValueAnimator colorAnimation;
     private int displayedColor, targetColor;
     private boolean tintWallpaper;
+    private final Runnable openRequestedReview = () -> {
+        long now = System.currentTimeMillis();
+        if (!reviewLaunch.pending(now)) return;
+        cfg.refresh();
+        if (reviewLaunch.take(now, "on".equals(cfg.get("review.enabled", "off")),
+                resumed, hasWindowFocus())) startActivity(new Intent(this, DailyReview.class));
+    };
 
     private final BroadcastReceiver packages = new BroadcastReceiver() {
         @Override
@@ -193,6 +201,7 @@ public final class Home extends Activity {
         if (tv != null) tv.registerCallback(inputWatch, ui);
         firstApps(catalog, times);
         loadInputs();
+        receiveReviewRequest(getIntent());
     }
 
     /**
@@ -236,6 +245,7 @@ public final class Home extends Activity {
         f.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         registerReceiver(time, f);
         tick();
+        ui.post(openRequestedReview);
     }
 
     @Override
@@ -251,6 +261,7 @@ public final class Home extends Activity {
             Guard.focused(this);
             View decor = getWindow().getDecorView();
             decor.postOnAnimation(() -> decor.postOnAnimation(() -> Guard.shown(this)));
+            ui.post(openRequestedReview);
         }
     }
 
@@ -263,6 +274,7 @@ public final class Home extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
+        reviewLaunch.cancel(); ui.removeCallbacks(openRequestedReview);
         Guard.homePaused();
         stopColorAnimation();
         targetColor = 0;
@@ -272,6 +284,7 @@ public final class Home extends Activity {
 
     @Override
     protected void onDestroy() {
+        reviewLaunch.cancel(); ui.removeCallbacks(openRequestedReview);
         unregisterReceiver(packages);
         if (tv != null) tv.unregisterCallback(inputWatch);
         io.shutdownNow();
@@ -301,6 +314,18 @@ public final class Home extends Activity {
         super.onNewIntent(intent);
         if (moving != null) stopMoving();
         if (resumed) focusFirst();
+        receiveReviewRequest(intent);
+    }
+
+    private void receiveReviewRequest(Intent intent) {
+        reviewLaunch.cancel(); ui.removeCallbacks(openRequestedReview);
+        if (intent == null || !ReviewLaunch.ACTION.equals(intent.getAction())) return;
+        try {
+            long deadline = intent.getLongExtra(ReviewLaunch.DEADLINE, 0);
+            intent.removeExtra(ReviewLaunch.DEADLINE);
+            reviewLaunch.offer(deadline, System.currentTimeMillis());
+            ui.post(openRequestedReview);
+        } catch (RuntimeException ignored) { /* Invalid external extras never crash Home. */ }
     }
 
     @Override
@@ -981,8 +1006,7 @@ public final class Home extends Activity {
     private void open(Tile t) {
         if (Catalog.APPS.equals(t.kind)) {
             if ("daily-review".equals(t.item.id)) {
-                // Use the fixed review destination without the chooser's task-reset
-                // flags. The manifest keeps its reusable task separate from Home.
+                // Use the in-app review destination without the chooser's task-reset flags.
                 startActivity(new Intent(t.item.intent));
                 return;
             }

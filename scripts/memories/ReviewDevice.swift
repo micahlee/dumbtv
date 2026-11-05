@@ -88,11 +88,18 @@ final class ReviewDevice {
         guard live(), let _ = adb(["connect", device], until: deadline),
               adb(["get-state"], until: deadline)?.trimmingCharacters(in: .whitespacesAndNewlines) == "device" else { return live() ? "unavailable" : "expired" }
         guard live(), adb(["shell", "input", "keyevent", "KEYCODE_WAKEUP"], until: deadline) != nil else { return live() ? "uncertain" : "expired" }
-        guard live(), adb(["shell", "am", "start", "-n", "tv.dumbtv.home/.Home"], until: deadline) != nil else { return live() ? "uncertain" : "expired" }
-        Thread.sleep(forTimeInterval: 3)
-        guard live(), adb(["shell", "am", "start", "-n", "tv.dumbtv.home/.DailyReview"], until: deadline) != nil else { return live() ? "uncertain" : "expired" }
-        guard let focus = adb(["shell", "dumpsys", "window", "windows"], until: deadline),
-              focus.split(separator: "\n").contains(where: { $0.contains("mCurrentFocus") && $0.contains("tv.dumbtv.home.DailyReview") }) else { return "uncertain" }
-        return "shown"
+        let focusDeadline = min(deadline, Date().addingTimeInterval(6))
+        guard live(), adb(["shell", "am", "start", "-a", "tv.dumbtv.home.OPEN_DAILY_REVIEW",
+            "-n", "tv.dumbtv.home/.Home", "--el", "review.execute_before",
+            String(Int64(focusDeadline.timeIntervalSince1970 * 1000))], until: focusDeadline) != nil
+            else { return live() ? "uncertain" : "expired" }
+        while live() && Date() < focusDeadline {
+            if let focus = adb(["shell", "dumpsys", "window", "windows"], until: focusDeadline),
+               focus.split(separator: "\n").contains(where: { $0.contains("mCurrentFocus") && $0.contains("tv.dumbtv.home.DailyReview") }) {
+                return "shown"
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return live() ? "uncertain" : "expired"
     }
 }
