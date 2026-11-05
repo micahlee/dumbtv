@@ -114,6 +114,11 @@ def native(helper, *args):
 def prepare(config, state, entries, kind):
     if kind not in ('memories', 'wallpapers'):
         raise RuntimeError('Unknown collage collection')
+    overrides = config.get('photo_orientation_overrides', {})
+    if not isinstance(overrides, dict) or any(
+            not isinstance(key, str) or not re.fullmatch('[0-9a-f]{64}', key)
+            or value not in ('metadata', 'pixels') for key, value in overrides.items()):
+        raise RuntimeError('Reviewed photo orientation settings are invalid; TV cache retained')
     helper = config.get('collage_helper', str(Path(config['image_helper']).with_name('memory-collage')))
     folder = state / 'collages'
     folder.mkdir(mode=0o700, exist_ok=True)
@@ -134,8 +139,11 @@ def prepare(config, state, entries, kind):
             duplicates += 1
             continue
         hashes.add(sha)
-        if not isinstance(analysis.get(sha), dict) or analysis[sha].get('version') != VERSION:
-            analysis[sha] = fingerprint(native(helper, '--fingerprint', entry['source']))
+        reviewed = overrides.get(sha, 'automatic')
+        if (not isinstance(analysis.get(sha), dict) or analysis[sha].get('version') != VERSION
+                or analysis[sha].get('orientationOverride', 'automatic') != reviewed):
+            args = ('--fingerprint', entry['source']) + ((reviewed,) if reviewed != 'automatic' else ())
+            analysis[sha] = dict(fingerprint(native(helper, *args)), orientationOverride=reviewed)
         fp = fingerprint(analysis[sha])
         if any(same_photo(fp, other['fingerprint']) for other in unique):
             duplicates += 1

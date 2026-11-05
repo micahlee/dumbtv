@@ -159,6 +159,31 @@ class PhotoCollageTest(unittest.TestCase):
             self.assertTrue(all(p['orientationMode']=='pixels' for p in manifests[0]['photos']))
             self.assertEqual(json.loads((state/'collage-memories.json').read_text())[frames[0].name]['layout'],[dict(index=0)])
 
+    def test_reviewed_orientation_is_exact_file_scoped_and_reanalysis_is_reversible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=Path(directory);entries=[];calls=[]
+            for i in range(2):
+                path=state/str(i);path.write_text(str(i))
+                entries.append(dict(source=path,taken=dt.date(2010,11,5),proof=dict(eligible=True,curationVersion=1)))
+            sha=collages.source_hash(entries[0]['source'])
+            def native(helper,*args):
+                if args[0]=='--fingerprint':
+                    calls.append(args);i=int(Path(args[1]).read_text());mode=args[2] if len(args)==3 else 'metadata'
+                    return dict(fp(color=20+i*50,key=str(i)+mode),orientationMode=mode)
+                Path(args[1]).write_bytes(b'JPEG');return dict(width=1920,height=1080,photos=2,frameFill='scrapbook')
+            config=dict(image_helper='fixture')
+            with patch.object(collages,'native',side_effect=native):
+                collages.prepare(config,state,entries,'memories')
+                config['photo_orientation_overrides']={sha:'pixels'}
+                collages.prepare(config,state,entries,'memories')
+                self.assertEqual(len(calls),3);self.assertEqual(calls[-1],('--fingerprint',entries[0]['source'],'pixels'))
+                collages.prepare(config,state,entries,'memories');self.assertEqual(len(calls),3)
+                config['photo_orientation_overrides']={}
+                collages.prepare(config,state,entries,'memories');self.assertEqual(len(calls),4)
+            for bad in [{'not-a-sha':'pixels'},{sha:'rotate-whatever'},[]]:
+                config['photo_orientation_overrides']=bad
+                with self.assertRaises(RuntimeError):collages.prepare(config,state,entries,'memories')
+
 
 @unittest.skipUnless(sys.platform=='darwin' and shutil.which('swiftc'), 'macOS native renderer')
 class NativeCollageTest(unittest.TestCase):
@@ -232,6 +257,15 @@ class NativeCollageTest(unittest.TestCase):
                         py=1080-(p['y']+x*math.sin(a)+y*math.cos(a))
                         actual=image.getpixel((round(px),round(py)))
                         self.assertLess(max(abs(a-b) for a,b in zip(actual,color)),45)
+
+    def test_explicit_reviewed_orientation_controls_fingerprint_and_rejects_unknown_modes(self):
+        image=self.Image.new('RGB',(300,600),'blue');exif=self.Image.Exif();exif[274]=6
+        source=self.root/'stale-orientation.jpg';image.save(source,exif=exif)
+        automatic=collages.native(self.helper,'--fingerprint',source)
+        raw=collages.native(self.helper,'--fingerprint',source,'pixels')
+        self.assertGreater(automatic['width'],automatic['height'])
+        self.assertLess(raw['width'],raw['height']);self.assertEqual(raw['orientationMode'],'pixels')
+        with self.assertRaises(RuntimeError):collages.native(self.helper,'--fingerprint',source,'arbitrary')
 
     def test_orientation_repair_requires_strong_upright_evidence(self):
         main=self.root/'policy/main.swift';main.parent.mkdir(exist_ok=True)
