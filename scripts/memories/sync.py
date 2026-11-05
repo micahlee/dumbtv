@@ -469,6 +469,12 @@ def main():
             print(json.dumps({"review": daily_review.refresh(config, args.prepare_only)}))
         except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
             print(json.dumps({"review": "refresh_failed_cache_retained"}), file=sys.stderr)
+    if config.get("weather_video", {}).get("enabled") and not args.dry_run:
+        import weather_video
+        try:
+            print(json.dumps({"weatherVideo": weather_video.refresh(config, args.prepare_only)}))
+        except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired):
+            print(json.dumps({"weatherVideo": "refresh_failed_cache_retained"}), file=sys.stderr)
     try:
         print(json.dumps(refresh(config, args.prepare_only, args.dry_run, args.limit)))
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
