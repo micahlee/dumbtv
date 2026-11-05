@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -28,7 +29,10 @@ import java.util.concurrent.Executors;
 final class MemoryFrame extends FrameLayout {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
-    private final ImageView image;
+    private final FrameLayout pictures;
+    private final ImageView[] images = new ImageView[2];
+    private int activeImage = -1;
+    private Runnable dissolve;
     private final TextView clock, caption;
     private final File root;
     private final boolean fullColor;
@@ -61,9 +65,11 @@ final class MemoryFrame extends FrameLayout {
         root = new File(Config.get(c).dir, "memories");
         fullColor = "full".equals(Config.get(c).get("memories.color", "compact"));
         setBackgroundColor(0xFF000000);
-        image = new ImageView(c);
-        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        addView(image, new LayoutParams(-1, -1));
+        pictures = new FrameLayout(c); addView(pictures, new LayoutParams(-1, -1));
+        for (int i = 0; i < images.length; i++) {
+            images[i] = new ImageView(c); images[i].setScaleType(ImageView.ScaleType.FIT_CENTER);
+            pictures.addView(images[i], new LayoutParams(-1, -1));
+        }
         clock = Ui.text(c, 26, 0xFFFFFFFF, Ui.LIGHT);
         clock.setShadowLayer(6, 1, 1, 0xFF000000);
         LayoutParams cp = new LayoutParams(-2, -2, Gravity.TOP | Gravity.RIGHT);
@@ -113,10 +119,13 @@ final class MemoryFrame extends FrameLayout {
             final Bitmap ready = bitmap;
             final MemoryDates.Photo photo = selected;
             ui.post(() -> {
-                if (stopped) return;
+                if (stopped) { if (ready != null) ready.recycle(); return; }
                 if (photo != null) {
-                    image.setImageBitmap(ready); deck.shown(photo.file);
-                    if (MemoryDates.onThisDay(photo, today)) caption.setText(photo.collage
+                    showPage(ready); deck.shown(photo.file);
+                    clock.setTextColor(photo.scrapbook ? 0xFF383A38 : 0xFFFFFFFF);
+                    clock.setShadowLayer(photo.scrapbook ? 0 : 6, 1, 1, 0xFF000000);
+                    if (photo.scrapbook) caption.setText(""); // Factual dates are already on the paper and prints.
+                    else if (MemoryDates.onThisDay(photo, today)) caption.setText(photo.collage
                             ? "On this day · Photo memories" : "On this day · " + photo.year);
                     else {
                         Calendar date = Calendar.getInstance(); date.set(photo.year, photo.month - 1, photo.day);
@@ -135,10 +144,37 @@ final class MemoryFrame extends FrameLayout {
         });
     }
 
+    private void showPage(Bitmap bitmap) {
+        if (dissolve != null) ui.removeCallbacks(dissolve);
+        int previous = activeImage, incoming = activeImage == 0 ? 1 : 0;
+        ImageView next = images[incoming];
+        next.setImageBitmap(bitmap); next.setTranslationX(0); next.setAlpha(1f);
+        pictures.bringChildToFront(next); activeImage = incoming;
+        if (previous < 0) return;
+        ImageView old = images[previous];
+        final long start = SystemClock.uptimeMillis();
+        next.setAlpha(0f);
+        dissolve = new Runnable() {
+            @Override public void run() {
+                if (stopped) return;
+                float t = PhotoTransition.progress(SystemClock.uptimeMillis() - start);
+                next.setAlpha(t); next.setTranslationX(getWidth() * .018f * (1f - t));
+                old.setTranslationX(-getWidth() * .008f * t);
+                if (t < 1f) ui.postDelayed(this, 16);
+                else {
+                    old.setImageDrawable(null); old.setTranslationX(0); old.setAlpha(1f);
+                    next.setTranslationX(0); dissolve = null;
+                }
+            }
+        };
+        ui.post(dissolve);
+    }
+
     void stop() {
         stopped = true;
         ui.removeCallbacksAndMessages(null);
         io.shutdownNow();
-        image.setImageDrawable(null);
+        dissolve = null;
+        for (ImageView image : images) { image.setImageDrawable(null); image.setTranslationX(0); image.setAlpha(1f); }
     }
 }

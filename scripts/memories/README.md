@@ -30,11 +30,25 @@ the safe slideshow index reach the TV.
 
 Each distinct selected photo appears once per collection. Balanced pages contain
 two to four photos; a leftover slot is never filled by repeating a photo. Each
-photo stays complete over its own blurred fill, with its actual capture year
-(or recent date) drawn on the Mini. Anniversary pages never mix different month/
-days or label a mixed-year collage as a single year. A pool with fewer than two
+photo stays complete in a white Polaroid frame matching its natural orientation.
+The Mini renders warm paper, soft shadows, small deterministic tilts and varied
+placements; a little frame overlap is intentional. Existing useful IPTC/TIFF
+captions appear in handwriting with the actual year/date. Camera boilerplate,
+filenames, links and copyright strings are discarded; missing captions use just
+the date. Page titles use shared capture dates, never guessed names or occasions.
+For rotation tags 3/6/8, the Mini can correct stale EXIF only when strong upright
+face-pose evidence supports the raw pixels and the metadata transform does not.
+No clear evidence means metadata wins; mirrored tags are preserved. No face
+identities or pose observations are retained. Versioned analysis/page keys rebuild
+older grid pages once. Original files remain read-only. Anniversary pages never mix
+different month/days or label a mixed-year collage as a single year. A pool with fewer than two
 unique eligible photos has no collage page; Daily Review stays on its dashboard
 when there are no collage pages. The same processing applies to recent wallpapers.
+
+The TV dissolves between pages over 900 ms with a small horizontal settling motion,
+without zooming/cropping, holding at most two decoded pages. This app-local motion
+works independently of disabled system window animations and stops on leaving the
+photo view. Scrapbook pages carry their own dates; their clock uses dark ink.
 
 Failed analysis/rendering never publishes a partial collage collection. Content-
 addressed pages and fingerprint decisions are reused; successful refreshes bound

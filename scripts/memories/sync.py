@@ -15,7 +15,7 @@ import sys
 import time
 
 REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/memories"
-NAME = re.compile(r"(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}(?:_c)?\.jpg\Z")
+NAME = re.compile(r"(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}(?:_[cs])?\.jpg\Z")
 DATE = re.compile(r"((?:19|20)\d{2})[-_]?([01]\d)[-_]?([0-3]\d)")
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
 WALLPAPER = re.compile(r"recent_[0-9a-f]{16}\.jpg\Z")
@@ -420,7 +420,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                                  proof=wall_records[p.name]) for p in wallpapers]
             frames, collage_stats = collages.prepare(config, state, memory_entries, "memories")
             wallpapers, wall_collage_stats = collages.prepare(config, state, wall_entries, "wallpapers")
-            status.update(sourcePhotos=collage_stats["uniquePhotos"], photos=len(frames), collages=len(frames),
+            status.update(frameFill="scrapbook", sourcePhotos=collage_stats["uniquePhotos"], photos=len(frames), collages=len(frames),
                           duplicatesRemoved=collage_stats["duplicatesRemoved"],
                           unpairedPhotos=collage_stats["unpairedPhotos"], wallpaperCollages=len(wallpapers),
                           wallpaperDuplicatesRemoved=wall_collage_stats["duplicatesRemoved"],
