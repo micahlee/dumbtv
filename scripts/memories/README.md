@@ -236,3 +236,22 @@ covers date prefiltering and failure before atomic index activation.
 Real-device acceptance must also check automatic idle entry, exit, Home behavior,
 and that the scheduled owner is the intended Mac. Do not infer every-frame ad
 elimination or streaming-playback compatibility from a window-focus check.
+
+### Varied scrapbook pages
+
+Set `photo_diversity: true` in the private Mini configuration to prefer a variety
+of capture years and sessions. Anniversary selection round-robins shuffled years,
+and two-hour capture-time groups within each year, before the existing candidate
+limit and people/place filtering. The daily shuffle stays stable across hourly
+refreshes and does not prefer portrait or landscape. This explicitly replaces
+equal odds per source file: a huge single album must not crowd out smaller years.
+
+Composition places at most one photo from each available capture year on a page.
+It uses two to four distinct originals, spreads people/place scenes, and defers
+dominant-year surplus when otherwise it would produce same-year-only pages.
+With only one capture year available, color/scene-type differences are used as a
+weaker fallback. This is event/year diversity, not face recognition; it cannot
+guarantee different people in every photo. Original API dates, exact anniversary
+day, curation, deduplication and orientation corrections remain authoritative.
+Status distinguishes eligible originals, displayed originals and diversity-deferred
+originals. No images are repeated to fill a page or fetched from a wider date range.

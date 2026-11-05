@@ -155,6 +155,33 @@ def captured(item):
         return None
 
 
+def diverse_sample(bucket, today):
+    """Round-robin years and two-hour capture sessions, shuffled within each.
+
+    Small years receive a chance before a large album fills the bounded pool.
+    This is deliberately group-balanced rather than equal odds per source file.
+    """
+    years = {}
+    for rank, item in bucket:
+        taken = captured(item)
+        value = item['photo']['takenDateTime']
+        try:
+            hour = dt.datetime.fromisoformat(value.replace('Z', '+00:00')).hour // 2
+        except ValueError:
+            hour = -1
+        years.setdefault(taken.year, {}).setdefault(hour, []).append((rank, item))
+    def shuffled(label):
+        return hashlib.sha256((str(today) + ':' + str(label)).encode()).hexdigest()
+    queues = {}
+    for year, sessions in years.items():
+        sessions = [sorted(values, key=lambda p:p[0]) for _, values in
+                    sorted(sessions.items(), key=lambda p:shuffled(str(year)+':'+str(p[0])))]
+        queues[year] = [session[i] for i in range(max(map(len, sessions)))
+                        for session in sessions if i < len(session)]
+    ordered = [values for _, values in sorted(queues.items(), key=lambda p:shuffled(p[0]))]
+    return [year[i] for i in range(max(map(len, ordered), default=0)) for year in ordered if i < len(year)]
+
+
 def select_photos(items, today, config, limit=None):
     buckets = [[] for _ in range(config.get('days_ahead', 7) + 1)]
     dates = [today + dt.timedelta(days=i) for i in range(len(buckets))]
@@ -177,7 +204,8 @@ def select_photos(items, today, config, limit=None):
             recent.append((taken, key, item))
     chosen = []
     for i, bucket in enumerate(buckets):
-        chosen.extend(sorted(bucket, key=lambda x: x[0])[:max(config.get('per_day', 40), 80) if i == 0 else config.get('per_day', 40)])
+        ordered = diverse_sample(bucket, today) if config.get('photo_diversity') else sorted(bucket, key=lambda x: x[0])
+        chosen.extend(ordered[:max(config.get('per_day', 40), 80) if i == 0 else config.get('per_day', 40)])
     memories = [item for _, item in chosen[:limit or config.get('max_photos', 240)]]
     recent.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return memories, [item for _, _, item in recent[:config.get('recent_limit', 30)]], undated

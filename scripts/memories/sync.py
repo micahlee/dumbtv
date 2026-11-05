@@ -421,6 +421,9 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
             frames, collage_stats = collages.prepare(config, state, memory_entries, "memories")
             wallpapers, wall_collage_stats = collages.prepare(config, state, wall_entries, "wallpapers")
             status.update(frameFill="scrapbook", sourcePhotos=collage_stats["uniquePhotos"], photos=len(frames), collages=len(frames),
+                          photoDiversity=bool(config.get("photo_diversity")),
+                          eligibleSourcePhotos=collage_stats["eligibleUniquePhotos"],
+                          diversityDeferredPhotos=collage_stats["diversityDeferredPhotos"],
                           duplicatesRemoved=collage_stats["duplicatesRemoved"],
                           unpairedPhotos=collage_stats["unpairedPhotos"], wallpaperCollages=len(wallpapers),
                           wallpaperDuplicatesRemoved=wall_collage_stats["duplicatesRemoved"],

@@ -98,6 +98,50 @@ def groups(entries):
     return result
 
 
+def varied_groups(entries):
+    """At most one capture year per page when multiple years are available.
+
+    Keep sparse years rather than filling pages with surplus from one session.
+    This groups events/dates, not identified faces. Single-year pools retain a
+    visual-scene ordering to reduce adjacent similar shots where possible.
+    """
+    years = {}
+    for entry in entries:
+        years.setdefault(entry['taken'].year, []).append(entry)
+    if len(years) < 2:
+        # A scene/type difference is a useful tie-break, never a face identity claim.
+        remaining = list(entries); ordered = []
+        while remaining:
+            if not ordered: chosen = 0
+            else:
+                prior = ordered[-1]
+                def distance(p):
+                    return (p['proof'].get('curationReason') != prior['proof'].get('curationReason'),
+                            sum((a-b)**2 for a,b in zip(p['fingerprint']['colorGrid'], prior['fingerprint']['colorGrid'])))
+                chosen = max(range(len(remaining)), key=lambda i:distance(remaining[i]))
+            ordered.append(remaining.pop(chosen))
+        return groups(ordered)
+    total = len(entries)
+    # Without this cap a 500-photo session plus three other photos still produces
+    # pages entirely of that session. Deferred originals remain in OneDrive.
+    for year, photos in years.items():
+        years[year] = photos[:min(len(photos), total-len(photos))]
+    total = sum(map(len, years.values()))
+    count = max(max(map(len, years.values())), (total+3)//4)
+    pages = [[] for _ in range(count)]
+    for year, photos in sorted(years.items(), key=lambda p:(-len(p[1]), p[0])):
+        available = set(range(count))
+        for photo in photos:
+            # Spread scenery and people as well as years, without identity inference.
+            def score(i):
+                return (len(pages[i]), sum(p['proof'].get('curationReason') == photo['proof'].get('curationReason')
+                                          for p in pages[i]), i)
+            target = min(available, key=score)
+            pages[target].append(photo);available.remove(target)
+    assert all(2 <= len(page) <= 4 for page in pages)
+    return pages
+
+
 def native(helper, *args):
     result = subprocess.run([str(helper), *map(str, args)], capture_output=True, text=True, timeout=60)
     if result.returncode:
@@ -154,13 +198,15 @@ def prepare(config, state, entries, kind):
         # A page must not claim today's anniversary while containing another day.
         bucket = entry['taken'].strftime('%m-%d') if kind == 'memories' else 'recent'
         buckets.setdefault(bucket, []).append(entry)
-    frames, records, unpaired = [], {}, 0
+    frames, records, unpaired, deferred = [], {}, 0, 0
     previous_path = state / ('collage-' + kind + '.json')
     previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
     for bucket in buckets.values():
         if len(bucket) == 1:
             unpaired += 1
-        for page in groups(bucket):
+        pages = varied_groups(bucket) if config.get('photo_diversity') else groups(bucket)
+        deferred += max(0, len(bucket) - sum(map(len, pages))) if len(bucket) > 1 else 0
+        for page in pages:
             if time.monotonic() >= deadline:
                 raise RuntimeError('Collage refresh budget exceeded; TV cache retained')
             members = [dict(sourceSHA256=p['sourceSHA256'], taken=str(p['taken']),
@@ -191,7 +237,8 @@ def prepare(config, state, entries, kind):
                                  title=page_title(page), layout=result.get('layout', previous.get(name, {}).get('layout', [])))
     atomic_json(analysis_path, analysis)
     atomic_json(state / ('collage-' + kind + '.json'), records)
-    return frames, dict(uniquePhotos=len(unique), duplicatesRemoved=duplicates, unpairedPhotos=unpaired,
+    return frames, dict(uniquePhotos=sum(p['photos'] for p in records.values()), eligibleUniquePhotos=len(unique),
+                        diversityDeferredPhotos=deferred, duplicatesRemoved=duplicates, unpairedPhotos=unpaired,
                         pages=len(frames), fingerprintHashes=sorted(hashes))
 
 
