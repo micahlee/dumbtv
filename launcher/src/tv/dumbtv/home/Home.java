@@ -981,8 +981,8 @@ public final class Home extends Activity {
     private void open(Tile t) {
         if (Catalog.APPS.equals(t.kind)) {
             if ("daily-review".equals(t.item.id)) {
-                // Like the built-in input screen, this belongs on our current task.
-                // RESET_TASK_IF_NEEDED would only bring Home forward and open nothing.
+                // Use the fixed review destination without the chooser's task-reset
+                // flags. The manifest keeps its reusable task separate from Home.
                 startActivity(new Intent(t.item.intent));
                 return;
             }

@@ -79,15 +79,18 @@ public final class DailyReview extends Activity {
         Config cfg = Config.get(this); cfg.refresh();
         if (!"on".equals(cfg.get("review.enabled", "off"))) { finish(); return; }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        if ("on".equals(cfg.get("review.photos", "off"))
-                && "on".equals(cfg.get("memories.enabled", "off"))) {
-            interlude = new ReviewInterlude(seconds(cfg, "review.photo_interval_seconds", 180, 15, 3600),
-                    seconds(cfg, "review.photo_duration_seconds", 45, 5, 180));
-        }
         load(); render();
     }
     @Override protected void onResume() {
         super.onResume(); resumed = true;
+        Config cfg = Config.get(this); cfg.refresh();
+        if (!"on".equals(cfg.get("review.enabled", "off"))) { finish(); return; }
+        // The external launcher can reuse this task. Re-read opt-ins and timing
+        // on every resume instead of retaining a previous invocation's settings.
+        interlude = "on".equals(cfg.get("review.photos", "off"))
+                && "on".equals(cfg.get("memories.enabled", "off"))
+                ? new ReviewInterlude(seconds(cfg, "review.photo_interval_seconds", 180, 15, 3600),
+                    seconds(cfg, "review.photo_duration_seconds", 45, 5, 180)) : null;
         if (!isFinishing()) {
             handler.post(poll);
             if (agendaScroll != null) agendaScroll.setActive(true);
@@ -96,6 +99,7 @@ public final class DailyReview extends Activity {
     }
     @Override protected void onPause() {
         resumed = false; handler.removeCallbacks(poll); handler.removeCallbacks(cycle);
+        consumedPhotoKey = KeyEvent.KEYCODE_UNKNOWN;
         if (interlude != null) interlude.pause();
         stopPhotos(false);
         if (agendaScroll != null) agendaScroll.setActive(false);
