@@ -132,17 +132,36 @@ class OneDrivePhotoTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'account changed'):
                 cloud.update_index(graph, path, time.monotonic() + 5)
 
-    def test_api_capture_dates_drive_selection_and_landscapes_are_favored(self):
+    def test_api_capture_dates_drive_selection(self):
         values = [photo('portrait', image={'width': 800, 'height': 1200}),
                   photo('landscape', image={'width': 1600, 'height': 900}),
                   photo('today', '2026-11-04T23:00:00-05:00'),
                   photo('week', '2026-10-29T10:00:00Z'), photo('too-old', '2026-10-28T10:00:00Z'),
                   photo('2020-11-04-filename-only', None)]
         memories, recent, undated = cloud.select_photos({x['id']: x for x in values}, dt.date(2026, 11, 4),
-                                                       dict(days_ahead=0, max_photos=1, recent_days=7))
-        self.assertEqual([p['id'] for p in memories], ['landscape'])
+                                                       dict(days_ahead=0, max_photos=30, recent_days=7))
+        self.assertEqual({p['id'] for p in memories}, {'landscape', 'portrait'})
         self.assertEqual([p['id'] for p in recent], ['today', 'week'])
         self.assertEqual(undated, 1)
+
+    def test_daily_sample_is_stable_and_independent_of_orientation_year_and_input_order(self):
+        values = [photo(str(i), image={'width': 1600, 'height': 900}) for i in range(200)]
+        config = dict(days_ahead=0, max_photos=30)
+        def sample(values, year=2026):
+            selected, _, _ = cloud.select_photos({p['id']: p for p in values}, dt.date(year, 11, 4), config)
+            return [p['id'] for p in selected]
+        original = sample(values)
+        self.assertEqual(len(set(original)), 30)
+        self.assertEqual(original, sample(list(reversed(values))))
+        changed = [photo(str(i), f'{2000 + i % 20}-11-04T12:00:00Z',
+                         image={'width': 800, 'height': 1200} if i % 2 else {'width': 1600, 'height': 900})
+                   for i in range(200)]
+        self.assertEqual(original, sample(changed))
+        self.assertNotEqual(original, sample(values, year=2027))
+        # Over many independent daily seeds, neither orientation group dominates.
+        counts = [sum(int(key) % 2 for key in sample(changed, year)) for year in range(2026, 2126)]
+        self.assertGreater(sum(counts), 1200)
+        self.assertLess(sum(counts), 1800)
 
     def test_new_year_and_leap_day_selection(self):
         values = [photo('end', '2020-12-31T12:00:00Z'), photo('next', '2026-01-01T12:00:00Z'), photo('leap', '2024-02-29T12:00:00Z')]
