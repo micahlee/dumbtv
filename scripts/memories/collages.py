@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 
-VERSION = 1
+VERSION = 2
 
 
 def atomic_json(path, value):
@@ -37,7 +37,38 @@ def fingerprint(value):
         raise RuntimeError('Photo fingerprint is incomplete; TV cache retained')
     if any(type(value.get(k)) is not int or not 0 < value[k] <= 256 for k in ['width', 'height']):
         raise RuntimeError('Photo fingerprint is incomplete; TV cache retained')
+    if value.get('orientationMode') not in ('metadata', 'pixels') or not isinstance(value.get('description', ''), str):
+        raise RuntimeError('Photo orientation analysis is incomplete; TV cache retained')
     return value
+
+
+def useful_description(value):
+    text = ' '.join(value.split())
+    if not 4 <= len(text) <= 46 or any(ord(c) < 32 for c in text):
+        return ''
+    if re.search(r'(?i)(https?://|www\.|@|copyright|all rights reserved|\.(jpg|jpeg|png|heic)\b)', text):
+        return ''
+    if re.match(r'(?i)^(sony(?: dsc)?|canon|nikon|olympus(?: digital camera)?|panasonic|kodak|samsung|apple|iphone|digital camera|dsc|img|dcim|untitled|image|photo)[\s_\d.-]*$', text):
+        return ''
+    if not any(c.isalpha() for c in text):
+        return ''
+    return text
+
+
+def page_title(page):
+    dates = [p['taken'] for p in page]
+    first = min(dates)
+    if len(set(dates)) == 1:
+        return first.strftime('%B ') + str(first.day) + ', ' + str(first.year)
+    if len({(d.month, d.day) for d in dates}) == 1:
+        return first.strftime('%B ') + str(first.day) + ' · Through the years'
+    return first.strftime('%b ') + str(first.day) + ' – ' + max(dates).strftime('%b ') + str(max(dates).day)
+
+
+def photo_caption(entry, kind):
+    date = entry['taken'].strftime('%Y' if kind == 'memories' else '%b %d, %Y')
+    description = useful_description(entry['fingerprint'].get('description', ''))
+    return description + ' · ' + date if description else date
 
 
 def same_photo(a, b):
@@ -103,7 +134,7 @@ def prepare(config, state, entries, kind):
             duplicates += 1
             continue
         hashes.add(sha)
-        if sha not in analysis:
+        if not isinstance(analysis.get(sha), dict) or analysis[sha].get('version') != VERSION:
             analysis[sha] = fingerprint(native(helper, '--fingerprint', entry['source']))
         fp = fingerprint(analysis[sha])
         if any(same_photo(fp, other['fingerprint']) for other in unique):
@@ -116,6 +147,8 @@ def prepare(config, state, entries, kind):
         bucket = entry['taken'].strftime('%m-%d') if kind == 'memories' else 'recent'
         buckets.setdefault(bucket, []).append(entry)
     frames, records, unpaired = [], {}, 0
+    previous_path = state / ('collage-' + kind + '.json')
+    previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
     for bucket in buckets.values():
         if len(bucket) == 1:
             unpaired += 1
@@ -123,28 +156,31 @@ def prepare(config, state, entries, kind):
             if time.monotonic() >= deadline:
                 raise RuntimeError('Collage refresh budget exceeded; TV cache retained')
             members = [dict(sourceSHA256=p['sourceSHA256'], taken=str(p['taken']),
-                            pixelHash=p['fingerprint']['pixelHash'], curationReason=p['proof'].get('curationReason'),
+                            pixelHash=p['fingerprint']['pixelHash'], orientationMode=p['fingerprint']['orientationMode'],
+                            caption=photo_caption(p, kind), curationReason=p['proof'].get('curationReason'),
                             eligible=True, curationVersion=1) for p in page]
-            key = hashlib.sha256(('collage-v1:' + kind + ':' + json.dumps(members, sort_keys=True)).encode()).hexdigest()[:16]
-            name = (str(min(p['taken'] for p in page)) + '_' + key + '_c.jpg' if kind == 'memories'
+            key = hashlib.sha256(('scrapbook-v2:' + kind + ':' + json.dumps(members, sort_keys=True)).encode()).hexdigest()[:16]
+            name = (str(min(p['taken'] for p in page)) + '_' + key + '_s.jpg' if kind == 'memories'
                     else 'recent_' + key + '.jpg')
             target = folder / name
+            result = {}
             if not target.is_file() or not target.stat().st_size:
                 manifest = folder / (key + '.manifest.json')
                 temp = folder / (name + '.part')
                 try:
-                    atomic_json(manifest, {'version': VERSION, 'photos': [
-                        {'path': str(p['source']), 'caption': p['taken'].strftime('%Y' if kind == 'memories' else '%b %d, %Y')}
-                        for p in page]})
+                    atomic_json(manifest, {'version': VERSION, 'seed': key, 'title': page_title(page), 'photos': [
+                        {'path': str(p['source']), 'caption': photo_caption(p, kind),
+                         'orientationMode': p['fingerprint']['orientationMode']} for p in page]})
                     result = native(helper, manifest, temp)
-                    if (result.get('width'), result.get('height'), result.get('photos'), result.get('frameFill')) != (1920, 1080, len(page), 'blur') or not temp.is_file() or not temp.stat().st_size:
+                    if (result.get('width'), result.get('height'), result.get('photos'), result.get('frameFill')) != (1920, 1080, len(page), 'scrapbook') or not temp.is_file() or not temp.stat().st_size:
                         raise RuntimeError('Collage rendering is incomplete; TV cache retained')
                     temp.replace(target)
                 finally:
                     manifest.unlink(missing_ok=True)
                     temp.unlink(missing_ok=True)
             frames.append(target)
-            records[name] = dict(version=VERSION, kind=kind, members=members, photos=len(page), frameFill='blur')
+            records[name] = dict(version=VERSION, kind=kind, members=members, photos=len(page), frameFill='scrapbook',
+                                 title=page_title(page), layout=result.get('layout', previous.get(name, {}).get('layout', [])))
     atomic_json(analysis_path, analysis)
     atomic_json(state / ('collage-' + kind + '.json'), records)
     return frames, dict(uniquePhotos=len(unique), duplicatesRemoved=duplicates, unpairedPhotos=unpaired,
@@ -154,7 +190,7 @@ def prepare(config, state, entries, kind):
 def prune(state, keep, fingerprint_hashes):
     folder = state / 'collages'
     for file in folder.iterdir():
-        if re.fullmatch(r'(?:(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}_c|recent_[0-9a-f]{16})\.jpg', file.name) and file.name not in keep:
+        if re.fullmatch(r'(?:(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}_[cs]|recent_[0-9a-f]{16})\.jpg', file.name) and file.name not in keep:
             file.unlink()
     analysis_path = state / 'collage-analysis.json'
     if analysis_path.exists():

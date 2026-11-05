@@ -24,6 +24,8 @@ public final class MemoryDatesTest {
                 || MemoryDates.parse("2021-02-29_0123456789abcdef.jpg") != null
                 || MemoryDates.parse("2020-13-01_0123456789abcdef.jpg") != null) throw new AssertionError("invalid filename/date");
         if (MemoryDates.parse("2020-02-29_0123456789abcdef.jpg") == null) throw new AssertionError("leap day");
+        MemoryDates.Photo page = MemoryDates.parse("2020-11-02_0123456789abcdef_s.jpg");
+        if (page == null || !page.collage || !page.scrapbook) throw new AssertionError("scrapbook page");
         System.out.println("MemoryDatesTest passed");
     }
 }
