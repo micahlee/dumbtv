@@ -34,9 +34,10 @@ consumes that press, so Back does not also exit the dashboard. Holding a key doe
 not cause a second action. Volume continues to work; Home/power retain their
 system behavior. Any normal interaction restarts the reading interval. Leaving
 the Activity cancels the cycle and photo decoder; returning starts on the review.
-The review uses its own hidden, reusable task so an external bridge launch cannot
-be reduced to bringing the app chooser's existing task forward. Back still returns
-to that chooser; opt-ins and timing are refreshed whenever review resumes.
+The external bridge sends Home a fixed review request with a short UI deadline
+bounded by the original execution deadline. Home opens the normal tile path only while
+resumed/focused, opted in and unexpired; leaving Home cancels a pending request.
+Back still returns to the chooser. Opt-ins and timing refresh when review resumes.
 Weather/calendar refreshes received during photos appear when review returns.
 
 `review.photo_interval_seconds` (default `180`, range `15`–`3600`) and
