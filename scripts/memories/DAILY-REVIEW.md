@@ -19,6 +19,28 @@ FreeBusy API and never invent meeting titles. Work busy intervals appear in the
 agenda alongside other events. There is no separate work-availability strip;
 the weather sidebar gives that space to the hourly chart.
 
+### Brief photo interludes
+
+Set `review.photos=on` in the existing TV `home.conf` after preparing a collage
+cache on the Mini. While Daily Review is visible it shows the dashboard for three
+minutes, then its own offline photo view for 45 seconds (three 15-second collage
+slides), and returns automatically. It never starts the system screensaver or
+wakes the TV on a timer. Missing/unreadable collage photos return to the dashboard.
+The photo view uses the same curated cache as the idle slideshow; a shuffled deck
+avoids repeating a page until the available collection has been shown.
+
+A navigation-button press during photos returns immediately to Daily Review and
+consumes that press, so Back does not also exit the dashboard. Holding a key does
+not cause a second action. Volume continues to work; Home/power retain their
+system behavior. Any normal interaction restarts the reading interval. Leaving
+the Activity cancels the cycle and photo decoder; returning starts on the review.
+Weather/calendar refreshes received during photos appear when review returns.
+
+`review.photo_interval_seconds` (default `180`, range `15`–`3600`) and
+`review.photo_duration_seconds` (default `45`, range `5`–`180`) are optional private
+configuration values. Turning `review.photos=off` restores continuous review.
+The feature is off by default and also requires `memories.enabled=on`.
+
 Weather uses local vector icons for clear sun/moon, partly cloudy, cloudy, rain,
 thunderstorms, snow, ice/mix, fog and wind. The original forecast text remains
 visible; unknown conditions use an unknown symbol. The remaining hourly forecast

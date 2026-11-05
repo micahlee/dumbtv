@@ -15,7 +15,7 @@ import sys
 import time
 
 REMOTE = "/sdcard/Android/data/tv.dumbtv.home/files/memories"
-NAME = re.compile(r"(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}\.jpg\Z")
+NAME = re.compile(r"(?:19|20)\d\d-\d\d-\d\d_[0-9a-f]{16}(?:_c)?\.jpg\Z")
 DATE = re.compile(r"((?:19|20)\d{2})[-_]?([01]\d)[-_]?([0-3]\d)")
 EXTENSIONS = {".jpg", ".jpeg", ".heic", ".heif", ".png"}
 WALLPAPER = re.compile(r"recent_[0-9a-f]{16}\.jpg\Z")
@@ -198,7 +198,7 @@ def prepare_wallpapers(config, state, today, selected=None):
     metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
     frames, used = [], 0
     curate = config.get("suitable_only", False)
-    stats = {"rejected": 0, "failures": 0, "complete": True}
+    stats = {"rejected": 0, "failures": 0, "complete": True, "sources": {}}
     seen = set()
     deadline = time.monotonic() + config.get("recent_budget_seconds", 120)
     for named_date, source in selected:
@@ -246,6 +246,7 @@ def prepare_wallpapers(config, state, today, selected=None):
             break
         used += target.stat().st_size
         frames.append(target)
+        stats["sources"][target.name] = source
     if frames or (curate and stats["complete"] and not stats["failures"]):
         # Bound the local rolling cache too, while preserving it on an empty refresh.
         current = {p.name for p in frames}
@@ -306,6 +307,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
     if socket.gethostname() != config["owner_host"]:
         raise RuntimeError("This refresh is configured for a different Mac")
     frame_fill(config)
+    if config.get("photo_collages") and not config.get("suitable_only"):
+        raise RuntimeError("Photo collages require people/place filtering")
     today = dt.date.today()
     source = config.get("photo_source", "local")
     if source not in ("local", "onedrive-api"):
@@ -340,6 +343,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         allowed = {(d.month, d.day) for d in
                    (today + dt.timedelta(days=i) for i in range(config.get("days_ahead", 7) + 1))}
         frames, used, failures, rejected = [], 0, 0, 0
+        photo_sources = {}
+        photo_proofs = {}
         curate = config.get("suitable_only", False)
         complete = True
         deadline = time.monotonic() + config.get("budget_seconds", 480)
@@ -388,6 +393,8 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                 break
             used += size
             frames.append(photo)
+            photo_sources[photo.name] = path
+            photo_proofs[photo.name] = metadata[key]
         metadata_tmp = state / "metadata.json.next"
         metadata_tmp.write_text(json.dumps(metadata, sort_keys=True))
         metadata_tmp.replace(metadata_file)
@@ -400,6 +407,26 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         status["wallpapers"] = len(wallpapers)
         status["wallpapersRejected"] = wallpaper_stats.get("rejected", 0)
         status["wallpaperAnalysisFailures"] = wallpaper_stats.get("failures", 0)
+        input_names = {p.name for p in frames}
+        if config.get("photo_collages"):
+            import collages
+            if failures or not complete or wallpaper_stats.get("failures") or not wallpaper_stats.get("complete", True):
+                raise RuntimeError("Collage refresh incomplete; TV cache retained")
+            memory_entries = [dict(source=photo_sources[p.name], taken=dt.date.fromisoformat(p.name[:10]),
+                                   proof=photo_proofs[p.name]) for p in frames]
+            wall_records = json.loads((state / "wallpapers.json").read_text()) if wallpapers else {}
+            wall_entries = [dict(source=wallpaper_stats["sources"][p.name],
+                                 taken=dt.date.fromisoformat(wall_records[p.name]["taken"]),
+                                 proof=wall_records[p.name]) for p in wallpapers]
+            frames, collage_stats = collages.prepare(config, state, memory_entries, "memories")
+            wallpapers, wall_collage_stats = collages.prepare(config, state, wall_entries, "wallpapers")
+            status.update(sourcePhotos=collage_stats["uniquePhotos"], photos=len(frames), collages=len(frames),
+                          duplicatesRemoved=collage_stats["duplicatesRemoved"],
+                          unpairedPhotos=collage_stats["unpairedPhotos"], wallpaperCollages=len(wallpapers),
+                          wallpaperDuplicatesRemoved=wall_collage_stats["duplicatesRemoved"],
+                          wallpapers=len(wallpapers), bytes=sum(p.stat().st_size for p in frames))
+            if status["bytes"] > config.get("max_bytes", 134217728) or sum(p.stat().st_size for p in wallpapers) > config.get("recent_max_bytes", 67108864):
+                raise RuntimeError("Collage collection exceeds cache limit; TV cache retained")
         if prepare_only:
             status["status"] = "prepared"
         else:
@@ -411,9 +438,13 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
                 publish_wallpapers(adb, wallpapers, clear_empty=curate and wallpaper_stats.get("complete", False)
                                    and not wallpaper_stats.get("failures"))
                 for old in cache.iterdir():
-                    if NAME.fullmatch(old.name) and old.name not in retain:
+                    if NAME.fullmatch(old.name) and old.name not in (input_names if config.get("photo_collages") else retain):
                         old.unlink()
                 status["status"] = "published"
+        if config.get("photo_collages"):
+            previous = set((state / "index.txt").read_text().splitlines()) if (state / "index.txt").exists() else set()
+            collages.prune(state, previous | {p.name for p in frames + wallpapers},
+                           set(collage_stats['fingerprintHashes'] + wall_collage_stats['fingerprintHashes']))
         (state / "status.json").write_text(json.dumps(status, indent=2) + "\n")
         return status
 

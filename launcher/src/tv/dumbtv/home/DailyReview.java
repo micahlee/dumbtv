@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -45,12 +46,30 @@ public final class DailyReview extends Activity {
     private TextView footer;
     private AgendaScrollView agendaScroll;
     private boolean resumed;
+    private FrameLayout stage;
+    private MemoryFrame photoFrame;
+    private View dashboardFocus;
+    private final MemoryDeck photoDeck = new MemoryDeck();
+    private ReviewInterlude interlude;
+    private boolean pendingRender;
+    private int consumedPhotoKey = KeyEvent.KEYCODE_UNKNOWN;
+    private final Runnable cycle = new Runnable() {
+        @Override public void run() {
+            if (!resumed || interlude == null) return;
+            if (interlude.tick(SystemClock.uptimeMillis(), MemoryFrame.hasCollages(DailyReview.this))) {
+                if (photoFrame == null) showPhotos();
+            } else stopPhotos(true);
+            handler.removeCallbacks(this);
+            handler.postDelayed(this, interlude.delay(SystemClock.uptimeMillis()));
+        }
+    };
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             long today = dayStart(System.currentTimeMillis());
-            if (load() || today != shownDay || System.currentTimeMillis()/HOUR != shownHour) {
-                render();
-            } else updateFooter();
+            boolean changed = load() || today != shownDay || System.currentTimeMillis()/HOUR != shownHour;
+            if (photoFrame != null) pendingRender |= changed;
+            else if (changed || pendingRender) { pendingRender = false; render(); }
+            else updateFooter();
             handler.postDelayed(this, 60000);
         }
     };
@@ -60,6 +79,11 @@ public final class DailyReview extends Activity {
         Config cfg = Config.get(this); cfg.refresh();
         if (!"on".equals(cfg.get("review.enabled", "off"))) { finish(); return; }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if ("on".equals(cfg.get("review.photos", "off"))
+                && "on".equals(cfg.get("memories.enabled", "off"))) {
+            interlude = new ReviewInterlude(seconds(cfg, "review.photo_interval_seconds", 180, 15, 3600),
+                    seconds(cfg, "review.photo_duration_seconds", 45, 5, 180));
+        }
         load(); render();
     }
     @Override protected void onResume() {
@@ -67,17 +91,64 @@ public final class DailyReview extends Activity {
         if (!isFinishing()) {
             handler.post(poll);
             if (agendaScroll != null) agendaScroll.setActive(true);
+            if (interlude != null) { interlude.resume(SystemClock.uptimeMillis()); schedulePhotos(); }
         }
     }
     @Override protected void onPause() {
-        resumed = false; handler.removeCallbacks(poll);
+        resumed = false; handler.removeCallbacks(poll); handler.removeCallbacks(cycle);
+        if (interlude != null) interlude.pause();
+        stopPhotos(false);
         if (agendaScroll != null) agendaScroll.setActive(false);
         super.onPause();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        int code = event.getKeyCode();
+        if (consumedPhotoKey != KeyEvent.KEYCODE_UNKNOWN && code == consumedPhotoKey) {
+            if (event.getAction() == KeyEvent.ACTION_UP) consumedPhotoKey = KeyEvent.KEYCODE_UNKNOWN;
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            boolean wasPhotos = photoFrame != null;
+            if (interlude != null) { interlude.interact(SystemClock.uptimeMillis()); schedulePhotos(); }
+            if (wasPhotos) {
+                stopPhotos(true);
+                // Home/power remain system-owned. Volume still works while returning to review.
+                if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN
+                        && code != KeyEvent.KEYCODE_VOLUME_MUTE && code != KeyEvent.KEYCODE_POWER
+                        && code != KeyEvent.KEYCODE_HOME) { consumedPhotoKey = code; return true; }
+            }
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN && agendaScroll != null)
             agendaScroll.manualInteraction();
         return super.dispatchKeyEvent(event);
+    }
+
+    private long seconds(Config cfg, String key, int fallback, int minimum, int maximum) {
+        try { return Math.max(minimum, Math.min(maximum, Integer.parseInt(cfg.get(key, "" + fallback)))) * 1000L; }
+        catch (NumberFormatException ignored) { return fallback * 1000L; }
+    }
+    private void schedulePhotos() {
+        handler.removeCallbacks(cycle);
+        if (resumed && interlude != null) handler.postDelayed(cycle, interlude.delay(SystemClock.uptimeMillis()));
+    }
+    private void showPhotos() {
+        dashboardFocus = getCurrentFocus();
+        agendaScroll.setActive(false); root.setVisibility(View.INVISIBLE);
+        photoFrame = new MemoryFrame(this, photoDeck, true, () -> {
+            if (interlude != null) interlude.interact(SystemClock.uptimeMillis());
+            stopPhotos(true); schedulePhotos();
+        });
+        stage.addView(photoFrame, new FrameLayout.LayoutParams(MATCH, MATCH));
+    }
+    private void stopPhotos(boolean restoreFocus) {
+        if (photoFrame == null) return;
+        photoFrame.stop(); stage.removeView(photoFrame); photoFrame = null;
+        root.setVisibility(View.VISIBLE);
+        if (pendingRender && resumed) { pendingRender = false; render(); }
+        else {
+            if (restoreFocus && dashboardFocus != null) dashboardFocus.requestFocus();
+            if (agendaScroll != null) agendaScroll.setActive(resumed);
+        }
     }
 
     private boolean load() {
@@ -198,7 +269,8 @@ public final class DailyReview extends Activity {
         root.addView(content, bodyLp);
         footer = label("", 10, MUTED); footer.setPadding(0, dp(8), 0, 0);
         updateFooter(); root.addView(footer);
-        setContentView(root);
+        stage = new FrameLayout(this); stage.addView(root, new FrameLayout.LayoutParams(MATCH, MATCH));
+        setContentView(stage);
         back.requestFocus();
         for (int i=0; i<agenda.getChildCount(); i++) if (agenda.getChildAt(i).isFocusable()) {
             agenda.getChildAt(i).requestFocus(); break;
