@@ -132,6 +132,75 @@ Provider contracts:
 [Google FreeBusy](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query),
 [NWS weather API](https://www.weather.gov/documentation/services-web-api).
 
+### Optional lightweight calendar deduplication
+
+The Mini can ask a lightweight model about independently authored copies whose
+titles or durations differ. This is opt-in under `daily_review.dedup`:
+
+```json
+{
+  "enabled": true,
+  "model": "your-installed-light-model",
+  "command": ["/absolute/path/to/python3", "/absolute/path/to/classifier.py"],
+  "context": "Optional explicit team, person or venue aliases confirmed by the owner."
+}
+```
+
+The command reads one bounded JSON object on stdin: `version`, `model`,
+`instructions`, `context` and `pairs` (each has `id` and two `events`). It returns
+`{"decisions":[{"id":"pair-id","choice":"same","confidence":0.99}]}`.
+Allowed choices are `same`, `different`, and `uncertain`. IDs must cover every
+submitted pair exactly once; confidence must be finite and between zero and one.
+The model sees display titles, calendar labels, local times and locations only.
+Descriptions, attendees, calendar IDs and credentials are never sent.
+
+Candidates must be on different calendars, timed (not all-day/busy-only), overlap,
+start within five minutes and end within 90 minutes. Conflicting structured venues
+and generic titles such as “Appointment” or “November meeting” never reach the
+model. Exact copies need no model call. At most 32 candidate pairs
+are considered per refresh, and the command has a 60-second total budget. Only
+`same` judgments with confidence at least 0.8 can group. Every pair in a group
+must agree; transitive bridges, repeated source calendars and groups over eight
+records remain separate. Confidence is a model score, not a correctness guarantee.
+
+Successful judgments, including negative/uncertain answers, are cached privately
+by complete event identity/content, configured model/command/context and prompt
+version. Unchanged facts make no additional calls. A changed event invalidates
+its judgments immediately. Failed classifications keep separate rows and back off
+for one hour. Partial/invalid responses are discarded, never partially applied.
+Unavailable or stale source records do not participate. Bump `VERSION` when
+changing classifier semantics so old decisions cannot survive a policy change.
+
+Complete originals remain in `calendar.rawSources`. The legacy TV display fields
+in `calendar.sources` receive a shared group key, the shortest original title,
+the complete time span and all original source badges. When source intervals
+differ, the metadata says **Source times differ** and lists those intervals.
+Refresh fallback always uses the originals. Disabling deduplication restores the
+raw projection. No source calendar is edited and no TV APK update is needed.
+`review/status.json` records the model, candidate/group counts and availability.
+
+For an existing Axon installation, `axon_dedup.py` is an optional adapter:
+
+```text
+python3 axon_dedup.py --axon /absolute/path/to/axon --home /private/axon/home
+```
+
+It defaults to the existing `tv-daily-review` caller Service and
+`intelligence-openai` provider; either can be selected with `--caller-service`
+and `--provider`. Its model must be explicitly configured from the installed
+provider catalog. The caller's ServiceAccount needs only
+`service:intelligence-openai:decide`; the adapter discovers its current Process
+and uses the supported CLI. Provider/model pins, typed choices and stable call
+idempotency keys preserve attribution and prevent blind resubmission after an
+uncertain acknowledgment. API keys remain with the existing provider. Pair facts
+use short local IDs in the model input so each typed question has unambiguous
+evidence. Local judgments retain the original opaque cache IDs.
+
+`tests/evaluate_calendar_dedup.py --model MODEL --command COMMAND...` explicitly
+runs the model against the maintained synthetic positive/negative corpus and
+reports false merges and missed duplicates through the same candidate/confidence
+policy. It is not part of offline tests and never reads personal calendars.
+
 ### WYFF video rotation (opt-in)
 
 Enable `weather_video: {"enabled": true}` in the private Mini configuration and

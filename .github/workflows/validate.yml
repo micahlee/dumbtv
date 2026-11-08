@@ -43,6 +43,8 @@ jobs:
         run: |
           min=$("$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging launcher/build/dumbtv-home.apk | sed -nE "s/^(minSdkVersion|sdkVersion):'([0-9]+)'.*/\2/p")
           [ "$min" = 25 ] || { echo "expected minSdkVersion 25, found $min"; exit 1; }
+      - name: calendar projection through native TV grouping (JDK required)
+        run: python3 -m unittest discover -s tests -p test_calendar_dedup.py -v
       - name: no permissions on Fire OS 7 and later
         run: |
           # The only permissions allowed are Fire OS 6's Keeper trio, each capped at sdk 27.

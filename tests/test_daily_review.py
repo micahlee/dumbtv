@@ -11,6 +11,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts/memories"))
 spec = importlib.util.spec_from_file_location("daily_review", ROOT / "scripts/memories/daily_review.py")
 review = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(review)

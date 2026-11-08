@@ -163,7 +163,7 @@ def calendars(config, old, now):
             calendar.get("summaryOverride") or calendar.get("summary") or "Calendar")
         source = {"key": key, "label": text(label, 80), "color": calendar.get("backgroundColor", "#7fb7ff"),
                   "busyOnly": busy, "via": "Google Calendar"}
-        previous = next((s for s in old.get("sources", []) if s.get("key") == key), {})
+        previous = next((s for s in old.get("rawSources", old.get("sources", [])) if s.get("key") == key), {})
         try:
             if busy:
                 data = gws(binary, "freebusy", "query", body={"timeMin": start.isoformat(),
@@ -246,6 +246,9 @@ def refresh(owner, prepare_only=False, now=None):
             data["calendar"] = calendars(config, old.get("calendar", {}), now)
         except (RuntimeError, ValueError, KeyError, TypeError, OSError):
             data["calendar"] = dict(old.get("calendar", {}), error="Calendar refresh unavailable; check the mini")
+        from calendar_dedup import project
+        data["calendar"] = project(data["calendar"], dict(config.get("dedup", {}),
+                                    timezone=str(zone)), root / "dedup-decisions.json", now.timestamp())
         try:
             data["weather"] = weather(config["weather"], now)
         except (RuntimeError, ValueError, KeyError, TypeError, OSError):
@@ -254,6 +257,7 @@ def refresh(owner, prepare_only=False, now=None):
         status = {"preparedAt": data["builtAt"], "calendarSources": len(data["calendar"].get("sources", [])),
                   "calendarNeedsAttention": bool(data["calendar"].get("error")) or any(s.get("error") for s in data["calendar"].get("sources", [])),
                   "weatherNeedsAttention": bool(data["weather"].get("error")), "status": "prepared"}
+        status["calendarDedup"] = data["calendar"].get("dedup", {"state": "disabled"})
         if not prepare_only:
             from sync import ADB
             adb = ADB(owner["adb"], owner["device"], owner.get("adb_port", 5038))
