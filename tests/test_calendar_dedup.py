@@ -72,7 +72,7 @@ class CalendarDedupTest(unittest.TestCase):
         def different(config, pairs):
             return {p["id"]: {"choice": "different", "confidence": .99} for p in pairs}
         self.assertEqual(self.project(data, different)["sources"], data["sources"])
-        for changed in [dict(location="Other rink"), dict(busyOnly=True), dict(allDay=True),
+        for changed in [dict(busyOnly=True), dict(allDay=True),
                         dict(start=BASE+10*60000), dict(end=BASE+180*60000)]:
             a, b = event("a", "Game", location="Main rink"), event("b", "Game copy", 75)
             b.update(changed)
@@ -151,13 +151,31 @@ class CalendarDedupTest(unittest.TestCase):
             result = review.calendars({"gws": "fixture"}, old, review.dt.datetime.fromtimestamp(BASE/1000, review.UTC))
         self.assertEqual(result["sources"][0]["events"], old["rawSources"][0]["events"])
 
-    def test_generic_names_never_reach_model_even_if_it_would_say_same(self):
+    def test_generic_names_need_acquired_evidence_before_merging(self):
         for a, b in [("Appointment", "Appointment"), ("Meeting", "November meeting"),
                      ("Game", "Game"), ("Weekly practice", "Practice")]:
             data = calendar(event("a", a), event("b", b, 75))
             result = self.project(data)
-            self.assertEqual(result["dedup"]["candidates"], 0)
+            self.assertEqual(result["dedup"]["candidates"], 1)
             self.assertEqual(result["sources"], data["sources"])
+
+    def test_source_evidence_can_resolve_venue_conflict_and_invalidates_on_change(self):
+        data = calendar(event("a", "Alex game", location="North rink"), event("b", "12B vs City", 75, location="South rink"))
+        evidence = json.dumps([{"id": "read-1", "query": "{fixture}", "digest": "fixture-digest", "executionComplete": True}])
+        def response(config, pairs):
+            return {p["id"]: {"choice": "same", "confidence": .99, "evidence": ["read-1"], "sourceEvidenceJSON": evidence} for p in pairs}
+        with tempfile.TemporaryDirectory() as folder, patch.object(dedup, "classify", side_effect=response) as model:
+            path = Path(folder)/"cache.json"
+            first = dedup.project(data, CONFIG, path, BASE/1000)
+            self.assertEqual(first["dedup"]["groups"], 1)
+            location = first["sources"][0]["events"][0]["location"]
+            self.assertIn("Source venues differ: North rink / South rink", location)
+            with patch.object(dedup, "run_agent", return_value={"current": True}):
+                dedup.project(data, CONFIG, path, BASE/1000)
+            self.assertEqual(model.call_count, 1)
+            with patch.object(dedup, "run_agent", return_value={"current": False}):
+                dedup.project(data, CONFIG, path, BASE/1000)
+            self.assertEqual(model.call_count, 2)
 
     def test_candidate_budget_never_partially_groups_snapshot(self):
         data = calendar(event("a", "Community meeting"), event("b", "Community meeting copy", 75),

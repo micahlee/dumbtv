@@ -132,74 +132,90 @@ Provider contracts:
 [Google FreeBusy](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query),
 [NWS weather API](https://www.weather.gov/documentation/services-web-api).
 
-### Optional lightweight calendar deduplication
+### Optional Axon-owned agentic calendar reconciliation
 
-The Mini can ask a lightweight model about independently authored copies whose
-titles or durations differ. This is opt-in under `daily_review.dedup`:
+The Mini can request reconciliation from an installed lightweight **Axon agent**.
+The agent has native Axon schema/discovery and GraphQL read tools, chooses useful
+reads itself, and can inspect cross-domain sources to resolve missing identities.
+It receives the ambiguous records, not developer-precomputed team/venue answers.
+Enable under `daily_review.dedup`:
 
 ```json
 {
   "enabled": true,
   "model": "your-installed-light-model",
-  "command": ["/absolute/path/to/python3", "/absolute/path/to/classifier.py"],
-  "context": "Optional explicit team, person or venue aliases confirmed by the owner."
+  "command": ["/absolute/path/to/python3", "/absolute/path/to/axon_dedup.py",
+              "--axon", "/absolute/path/to/axon", "--home", "/private/axon/home"]
 }
 ```
 
-The command reads one bounded JSON object on stdin: `version`, `model`,
-`instructions`, `context` and `pairs` (each has `id` and two `events`). It returns
-`{"decisions":[{"id":"pair-id","choice":"same","confidence":0.99}]}`.
-Allowed choices are `same`, `different`, and `uncertain`. IDs must cover every
-submitted pair exactly once; confidence must be finite and between zero and one.
-The model sees display titles, calendar labels, local times and locations only.
-Descriptions, attendees, calendar IDs and credentials are never sent.
+`axon_dedup.py` calls the installed `agentic-read-v1` capability on the selected
+provider (default `intelligence-openai`), using the existing TV caller Service.
+The provider/model are pinned; API keys remain with the provider. This requires
+that provider's `agenticReads` opt-in and Core's `platform.read-all` support.
+The read grant covers all Axon resources/data, including newly registered sources,
+and grants neither write verbs nor Service invocation authority. Calendar edits,
+RSVPs, messages, purchases and other external effects are not available through
+the agent's read tool. Separate domain authorization remains required for effects.
 
-Candidates must be on different calendars, timed (not all-day/busy-only), overlap,
-start within five minutes and end within 90 minutes. Conflicting structured venues
-and generic titles such as “Appointment” or “November meeting” never reach the
-model. Exact copies need no model call. At most 32 candidate pairs
-are considered per refresh, and the command has a 60-second total budget. Only
-`same` judgments with confidence at least 0.8 can group. Every pair in a group
-must agree; transitive bridges, repeated source calendars and groups over eight
-records remain separate. Confidence is a model score, not a correctness guarantee.
+The agent can discover `DataRepository` resources and introspect GraphQL types,
+then query relevant current data. An installed Crossbar source exposes family
+participants, team memberships and dated schedules. Source failures are explicit.
+The agent must investigate unresolved participant/team/venue information before
+returning uncertain, and must cite actual successful read IDs for acquired facts.
+A stale reminder and an authoritative fixture can disagree; a venue discrepancy
+is a reason to investigate, rather than a blanket exclusion from inference.
 
-Successful judgments, including negative/uncertain answers, are cached privately
-by complete event identity/content, configured model/command/context and prompt
-version. Unchanged facts make no additional calls. A changed event invalidates
-its judgments immediately. Failed classifications keep separate rows and back off
-for one hour. Partial/invalid responses are discarded, never partially applied.
-Unavailable or stale source records do not participate. Bump `VERSION` when
-changing classifier semantics so old decisions cannot survive a policy change.
+The generic command protocol reads bounded JSON containing `version`, `model`,
+`instructions`, `reconciliationID`, optional caller `context`, and `pairs` (IDs and two display records).
+It returns decisions with `id`, `choice` (`same`, `different`, `uncertain`), finite
+`confidence`, `reason`, `evidence` read IDs, and provider-witnessed
+`sourceEvidenceJSON`. Every input ID must be covered exactly once. The calendar
+payload omits descriptions, attendees, raw calendar IDs and credentials; Axon may
+acquire relevant additional information through its own read tools.
 
-Complete originals remain in `calendar.rawSources`. The legacy TV display fields
-in `calendar.sources` receive a shared group key, the shortest original title,
-the complete time span and all original source badges. When source intervals
-differ, the metadata says **Source times differ** and lists those intervals.
-Refresh fallback always uses the originals. Disabling deduplication restores the
-raw projection. No source calendar is edited and no TV APK update is needed.
-`review/status.json` records the model, candidate/group counts and availability.
+Candidates are timed, overlapping records on different calendars, starting within
+five minutes and ending within 90 minutes. At most 32 pairs are considered per
+refresh. Exact copies with informative titles and compatible venues need no
+inference. A `same` result needs confidence at least 0.8. Source venue differences
+remain disclosed after grouping. Generic titles or conflicting structured venues
+also require acquired read evidence. Every pair in a group must agree; transitive bridges, repeated source
+calendars and groups over eight remain separate. These are display-integrity
+checks, not limits on the agent's access to Axon information. Confidence is a
+model score, not a correctness guarantee.
 
-For an existing Axon installation, `axon_dedup.py` is an optional adapter:
+Decisions retain their reasons and actual source dependencies. On subsequent
+refreshes, the helper asks `agentic-read-verify-v1` to re-read those exact queries
+without invoking intelligence. Unchanged content reuses the decision; changed or
+unavailable evidence invalidates it and invokes the agent again. A source `checkedAt` clock
+does not invalidate unchanged facts when backed by its stable `contentDigest`. Changed calendar records/model/
+command/context or prompt version also invalidate judgments. Failed inference
+preserves separate records and backs off for an hour. A command has a five-minute
+background deadline. Partial/invalid responses are never partially applied.
 
-```text
-python3 axon_dedup.py --axon /absolute/path/to/axon --home /private/axon/home
-```
+Complete originals remain in `calendar.rawSources`. The legacy TV projection in
+`calendar.sources` gets shared group keys, an original title, the complete span
+and all source badges. When source intervals differ, metadata says **Source times
+differ** and lists them. Refresh fallback uses originals; disabling this feature
+restores the raw projection. No calendar is edited and no TV APK update is needed.
+`review/status.json` reports the model, candidate/group counts and availability.
 
-It defaults to the existing `tv-daily-review` caller Service and
-`intelligence-openai` provider; either can be selected with `--caller-service`
-and `--provider`. Its model must be explicitly configured from the installed
-provider catalog. The caller's ServiceAccount needs only
-`service:intelligence-openai:decide`; the adapter discovers its current Process
-and uses the supported CLI. Provider/model pins, typed choices and stable call
-idempotency keys preserve attribution and prevent blind resubmission after an
-uncertain acknowledgment. API keys remain with the existing provider. Pair facts
-use short local IDs in the model input so each typed question has unambiguous
-evidence. Local judgments retain the original opaque cache IDs.
+The caller ServiceAccount requires exactly the provider's `agentic-read-v1` and
+`agentic-read-verify-v1` invocation capabilities. No `decide` call is used in this
+path. Native call identities, receipts and provider journals retain uncertain
+outcomes rather than blindly resubmitting them. AXON-3141 in the Engineering Hub
+is the governing Axon source/access change.
 
 `tests/evaluate_calendar_dedup.py --model MODEL --command COMMAND...` explicitly
-runs the model against the maintained synthetic positive/negative corpus and
-reports false merges and missed duplicates through the same candidate/confidence
-policy. It is not part of offline tests and never reads personal calendars.
+runs an installed agent against the maintained synthetic corpus. It is separate
+from offline tests. Actual source acquisition, preserved evidence, dependency
+invalidation and denied writes must also pass; a classifier-only answer or a
+manual lookup in the development chat is not acceptance.
+
+A fresh re-evaluation has a new reconciliation identity so service-call replay
+cannot return a superseded inference. Retries of one invocation retain their
+identity. Unresolved judgments retry after one hour, including when no source
+evidence was available to verify.
 
 ### WYFF video rotation (opt-in)
 
