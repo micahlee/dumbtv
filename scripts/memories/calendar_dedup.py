@@ -12,7 +12,7 @@ import unicodedata
 import uuid
 from zoneinfo import ZoneInfo
 
-VERSION = 2
+VERSION = 3
 MAX_PAIRS = 32
 MAX_BYTES = 262144
 MIN_CONFIDENCE = .8
@@ -202,7 +202,8 @@ def project(calendar, config, cache_path, now=None):
             dependencies = {}
             for proof in proofs:
                 for ref in json.loads(proof):
-                    dependencies[(ref["query"], ref["digest"])] = ref
+                    if ref.get("executionComplete") is True:
+                        dependencies[(ref["query"], ref["digest"])] = ref
             checked = run_agent(config, {"mode": "verify", "sourceEvidenceJSON": json.dumps(list(dependencies.values()))})
             if checked.get("current") is not True:
                 cache = {k: v for k, v in cache.items() if v.get("sourceEvidenceJSON") not in proofs}

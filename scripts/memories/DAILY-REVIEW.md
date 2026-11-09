@@ -188,7 +188,9 @@ Decisions retain their reasons and actual source dependencies. On subsequent
 refreshes, the helper asks `agentic-read-verify-v1` to re-read those exact queries
 without invoking intelligence. Unchanged content reuses the decision; changed or
 unavailable evidence invalidates it and invokes the agent again. A source `checkedAt` clock
-does not invalidate unchanged facts when backed by its stable `contentDigest`. Changed calendar records/model/
+does not invalidate unchanged facts when backed by its stable `contentDigest`
+or full typed snapshot envelope. Failed exploratory reads remain in the audit
+and are excluded from verified dependency sets. Changed calendar records/model/
 command/context or prompt version also invalidate judgments. Failed inference
 preserves separate records and backs off for an hour. A command has a five-minute
 background deadline. Partial/invalid responses are never partially applied.

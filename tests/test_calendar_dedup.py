@@ -161,7 +161,7 @@ class CalendarDedupTest(unittest.TestCase):
 
     def test_source_evidence_can_resolve_venue_conflict_and_invalidates_on_change(self):
         data = calendar(event("a", "Alex game", location="North rink"), event("b", "12B vs City", 75, location="South rink"))
-        evidence = json.dumps([{"id": "read-1", "query": "{fixture}", "digest": "fixture-digest", "executionComplete": True}])
+        evidence = json.dumps([{"id": "read-1", "query": "{fixture}", "digest": "fixture-digest", "executionComplete": True}, {"id": "failed-read", "query": "{badExploration}", "digest": "failed-digest", "executionComplete": False}])
         def response(config, pairs):
             return {p["id"]: {"choice": "same", "confidence": .99, "evidence": ["read-1"], "sourceEvidenceJSON": evidence} for p in pairs}
         with tempfile.TemporaryDirectory() as folder, patch.object(dedup, "classify", side_effect=response) as model:
@@ -170,8 +170,12 @@ class CalendarDedupTest(unittest.TestCase):
             self.assertEqual(first["dedup"]["groups"], 1)
             location = first["sources"][0]["events"][0]["location"]
             self.assertIn("Source venues differ: North rink / South rink", location)
-            with patch.object(dedup, "run_agent", return_value={"current": True}):
+            with patch.object(dedup, "run_agent", return_value={"current": True}) as verifier:
                 dedup.project(data, CONFIG, path, BASE/1000)
+                refs = json.loads(verifier.call_args.args[1]["sourceEvidenceJSON"])
+                self.assertEqual(len(refs), 1)
+                self.assertEqual(refs[0]["query"], "{fixture}")
+                self.assertTrue(all(r["executionComplete"] for r in refs))
             self.assertEqual(model.call_count, 1)
             with patch.object(dedup, "run_agent", return_value={"current": False}):
                 dedup.project(data, CONFIG, path, BASE/1000)
