@@ -249,3 +249,8 @@ independently of OneDrive photo processing. An unchanged clip is reused. Sleepin
 never woken for routine refresh. Offline playback uses the last valid cache;
 expired or failed media returns to the remaining loop. The station's page data
 is not a documented API: format/source ambiguity retains the previous cache.
+
+Uncertainty may reference an actual failed read to explain missing coverage.
+Such a read cannot support a `same` judgment; invented read IDs are rejected.
+The failed-read audit is retained while only completed facts become verified
+cache dependencies. This generation invalidates earlier failure-only judgments.
