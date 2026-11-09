@@ -230,7 +230,7 @@ def refresh(config, prepare_only=False):
         result = dict(status='prepared', publishedAt=value['publishedAt'], expiresAt=value['expiresAt'], bytes=value['bytes'])
         if not prepare_only:
             from sync import ADB
-            adb = ADB(config['adb'], config['device'], config.get('adb_port', 5038))
+            adb = ADB(config['adb'], config.get('device', ''), config.get('adb_port', 5038), config.get('device_service'))
             if adb.connect(): publish(adb, folder, value); result['status'] = 'published'
             else: result['status'] = 'tv_offline'
         # Keep current and one predecessor locally; the native player pins its open file.

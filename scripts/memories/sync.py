@@ -140,8 +140,9 @@ def candidates(sources, today, days_ahead=7, per_day=40, limit=240):
 
 
 class ADB:
-    def __init__(self, executable, device, port=5038):
+    def __init__(self, executable, device, port=5038, service=None):
         self.arguments, self.device = [executable, "-P", str(port)], device
+        self.service = service
 
     def call(self, *args, timeout=30):
         result = subprocess.run(self.arguments + ["-s", self.device, *args],
@@ -153,6 +154,15 @@ class ADB:
         return result.stdout.strip()
 
     def connect(self):
+        expected_serial = None
+        if self.service is not None:
+            from device_service import resolve, serial
+            expected_serial = serial(self.service)
+            try:
+                host, port = resolve(self.service)
+            except (RuntimeError, OSError):
+                return False
+            self.device = host + ":" + str(port)
         host, port = self.device.rsplit(":", 1)
         try:
             with socket.create_connection((host, int(port)), timeout=3):
@@ -164,6 +174,8 @@ class ADB:
         if result.returncode:
             raise RuntimeError("Could not connect to the TV")
         self.call("get-state")
+        if expected_serial is not None and self.call("shell", "getprop ro.serialno") != expected_serial:
+            raise RuntimeError("TV identity does not match its configured service")
         return True
 
 
@@ -433,7 +445,7 @@ def refresh(config, prepare_only=False, dry_run=False, limit=None):
         if prepare_only:
             status["status"] = "prepared"
         else:
-            adb = ADB(config["adb"], config["device"], config.get("adb_port", 5038))
+            adb = ADB(config["adb"], config.get("device", ""), config.get("adb_port", 5038), config.get("device_service"))
             if not adb.connect():
                 status["status"] = "tv_offline"
             else:

@@ -56,13 +56,12 @@ final class PhotoOwner: NSObject, NSApplicationDelegate {
 
     @objc private func refreshNow() {
         guard sync == nil, connection == nil,
-              let device = config["device"] as? String,
-              let host = device.split(separator: ":").first else { return }
+              let endpoint = ReviewDevice.networkEndpoint(config) else { return }
         retryTimer?.invalidate(); retryTimer = nil
         status.title = "Checking the TV…"
         // This ordinary Network-framework connection requests Local Network consent
         // for this app bundle. It is not a proxy: ADB performs all subsequent transfers.
-        let check = NWConnection(host: NWEndpoint.Host(String(host)), port: 5555, using: .tcp)
+        let check = NWConnection(to: endpoint, using: .tcp)
         connection = check
         check.stateUpdateHandler = { [weak self, weak check] state in
             guard let self = self else { return }

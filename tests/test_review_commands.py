@@ -60,3 +60,25 @@ print("expiry, owner, strict command, permissions, symlink, replay and crash rec
 ''')
             subprocess.run(['swiftc', str(stage / 'main.swift'), str(ROOT / 'scripts/memories/ReviewLaunch.swift'), '-o', str(stage / 'test')], check=True, timeout=60)
             subprocess.run([str(stage / 'test'), str(stage)], check=True, timeout=10)
+
+    def test_native_connection_prefers_exact_service_and_rejects_invalid_identity(self):
+        with tempfile.TemporaryDirectory(prefix='review-endpoint-test-') as tmp:
+            stage = Path(tmp)
+            (stage / 'main.swift').write_text(r'''
+import Foundation
+import Network
+let configured: [String: Any] = ["device_service": "adb-SYNTHETIC", "device": "obsolete.local:5555"]
+assert(ReviewDevice.serviceSerial(configured) == "SYNTHETIC")
+guard case let .service(name, type, domain, _) = ReviewDevice.networkEndpoint(configured)! else { fatalError("service was not preferred") }
+assert(name == "adb-SYNTHETIC" && type == "_adb._tcp" && domain == "local.")
+for invalid in ["", "Android.local", "adb-", "adb-bad._tcp.local", "adb-a\n"] {
+    let bad: [String: Any] = ["device_service": invalid, "device": "obsolete.local:5555"]
+    assert(ReviewDevice.networkEndpoint(bad) == nil)
+}
+guard case let .hostPort(host, port) = ReviewDevice.networkEndpoint(["device": "fixture.local:5556"])! else { fatalError("legacy endpoint unavailable") }
+assert(String(describing: host) == "fixture.local" && port.rawValue == 5556)
+print("serial-based service selection, invalid-identity denial and legacy endpoint passed")
+''')
+            subprocess.run(['swiftc', str(stage / 'main.swift'), str(ROOT / 'scripts/memories/ReviewDevice.swift'),
+                            str(ROOT / 'scripts/memories/ReviewLaunch.swift'), '-o', str(stage / 'test')], check=True, timeout=60)
+            subprocess.run([str(stage / 'test')], check=True, timeout=10)

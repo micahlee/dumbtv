@@ -260,7 +260,7 @@ def refresh(owner, prepare_only=False, now=None):
         status["calendarDedup"] = data["calendar"].get("dedup", {"state": "disabled"})
         if not prepare_only:
             from sync import ADB
-            adb = ADB(owner["adb"], owner["device"], owner.get("adb_port", 5038))
+            adb = ADB(owner["adb"], owner.get("device", ""), owner.get("adb_port", 5038), owner.get("device_service"))
             if adb.connect():
                 adb.call("shell", "mkdir -p " + REMOTE)
                 adb.call("push", str(path), REMOTE + "/review.json.next")
