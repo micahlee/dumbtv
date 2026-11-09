@@ -207,6 +207,21 @@ trigger a full rebuild. The default cloud-original cache is bounded to 1 GiB and
 preparation. The TV continues to use its existing smaller JPEG cache.
 
 Do not commit this configuration, photo indexes, photos, ADB keys, or job logs.
+For a TV advertising a serial-based `_adb._tcp.local.` Bonjour service, replace
+`device` with `device_service: "adb-<the-TV-serial>"` in the private configuration.
+Use the exact advertised instance name; do not put the service type/domain in
+this value. The native owner connects to that specific service, and each review,
+weather-video and photo publication resolves its current hostname and port through
+macOS Bonjour. The connected TV's `ro.serialno` must match the configured service
+before files are sent or a review command changes the display. The existing ADB
+key authorization still applies; the serial check is an additional identity check,
+not a replacement for authentication. Missing discovery leaves the existing TV cache
+intact. It never falls back to a saved IP or a generic Android hostname. Legacy
+explicit `device` configurations remain supported. The optional review-launch
+bridge uses the same service and identity check, retaining its original wake and
+expiry rules. Bonjour resolution does not enable ADB's separate mDNS discovery
+engine; an existing `ADB_MDNS=0` setting can remain unchanged.
+
 The hostname check prevents accidentally moving the job to a different Mac.
 Build installable Mac artifacts with `scripts/memories/build-mac.sh OUTPUT`.
 The script fetches and enforces clean `origin/main` before building. The app's
