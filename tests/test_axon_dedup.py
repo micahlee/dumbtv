@@ -40,5 +40,22 @@ class AxonDedupTest(unittest.TestCase):
         self.assertEqual(submitted[0]["idempotencyKey"], submitted[1]["idempotencyKey"])
         self.assertNotEqual(submitted[0]["idempotencyKey"], submitted[2]["idempotencyKey"])
 
+class FailedReadAuditTest(unittest.TestCase):
+    def test_uncertainty_may_cite_failed_read_but_merge_may_not(self):
+        args = argparse.Namespace(caller_service="fixture", provider="fixture-provider")
+        request = {"reconciliationID":"fixture-audit", "model":"fixture-light", "instructions":"Acquire facts", "pairs":[]}
+        for choice, cited, allowed in [("uncertain","read-1",True),("same","read-1",False),("uncertain","invented",False)]:
+            def invoke(args, *command, value=None):
+                if command[0]=="get": return {"status":{"process":"fixture-process","ready":True}}
+                if command[1]=="call": return {"callId":"fixture-call"}
+                return {"status":"succeeded","result":{"actualModel":"fixture-light","selection":{"model":"fixture-light"},"text":json.dumps({"decisions":[{"id":"pair","choice":choice,"confidence":0.5,"evidence":[cited]}]}),"sourceEvidenceJSON":json.dumps([{"id":"read-1","executionComplete":False}])}}
+            with patch.object(adapter,"invoke",side_effect=invoke):
+                if allowed:
+                    result=adapter.classify(args,request)
+                    self.assertEqual(result["decisions"][0]["choice"],"uncertain")
+                    self.assertIn('false',result["decisions"][0]["sourceEvidenceJSON"])
+                else:
+                    with self.assertRaises(ValueError): adapter.classify(args,request)
+
 
 if __name__ == "__main__": unittest.main()

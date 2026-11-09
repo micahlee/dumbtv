@@ -53,9 +53,12 @@ def classify(args, request):
                 raise RuntimeError("dedup_model_mismatch")
             answer = json.loads(output["text"])
             evidence = output["sourceEvidenceJSON"]
-            witnessed = {e["id"] for e in json.loads(evidence) if e.get("executionComplete") is True}
+            observed = json.loads(evidence)
+            witnessed = {e["id"] for e in observed}
+            complete = {e["id"] for e in observed if e.get("executionComplete") is True}
             for decision in answer["decisions"]:
-                if not isinstance(decision.get("evidence"), list) or any(e not in witnessed for e in decision["evidence"]):
+                eligible = complete if decision.get("choice") == "same" else witnessed
+                if not isinstance(decision.get("evidence"), list) or any(e not in eligible for e in decision["evidence"]):
                     raise ValueError("dedup_unwitnessed_evidence")
                 decision["sourceEvidenceJSON"] = evidence
                 decision["actualModel"] = output["actualModel"]

@@ -12,7 +12,7 @@ import unicodedata
 import uuid
 from zoneinfo import ZoneInfo
 
-VERSION = 3
+VERSION = 4
 MAX_PAIRS = 32
 MAX_BYTES = 262144
 MIN_CONFIDENCE = .8
