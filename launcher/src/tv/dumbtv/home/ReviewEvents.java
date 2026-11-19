@@ -1,7 +1,9 @@
 package tv.dumbtv.home;
 
+import java.text.DateFormat;
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,6 +45,17 @@ final class ReviewEvents {
             }
             return labels.toString();
         }
+
+        String timeLabel(long dayStart, long dayEnd, DateFormat format) {
+            if (allDay) return "All day";
+            String first = format.format(new Date(Math.max(dayStart, start)));
+            return start == end ? first : first + "\n– " + format.format(new Date(Math.min(dayEnd, end)));
+        }
+    }
+
+    static boolean occursDuring(long start, long end, boolean allDay, long dayStart, long dayEnd) {
+        if (start == end) return !allDay && start >= dayStart && start < dayEnd;
+        return start < end && start < dayEnd && end > dayStart;
     }
 
     private static String normalized(String value) {

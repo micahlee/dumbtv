@@ -1,7 +1,10 @@
 package tv.dumbtv.home;
 
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
 
 public final class ReviewEventsTest {
     private static ReviewEvents.Event event(String id, String title, String venue, String source) {
@@ -11,7 +14,31 @@ public final class ReviewEventsTest {
         int actual = ReviewEvents.combine(Arrays.asList(events)).size();
         if (actual != expected) throw new AssertionError("Expected " + expected + " events, got " + actual);
     }
+    private static void checkAgendaTimes() {
+        long dayStart = 5 * 3600000L;
+        long dayEnd = dayStart + 24 * 3600000L;
+        long nine = dayStart + 9 * 3600000L;
+        if (!ReviewEvents.occursDuring(dayStart, dayStart, false, dayStart, dayEnd)
+                || ReviewEvents.occursDuring(dayEnd, dayEnd, false, dayStart, dayEnd)
+                || !ReviewEvents.occursDuring(nine, nine, false, dayStart, dayEnd)
+                || ReviewEvents.occursDuring(dayStart - 1, dayStart, false, dayStart, dayEnd))
+            throw new AssertionError("agenda day boundaries");
+
+        SimpleDateFormat format = new SimpleDateFormat("h:mm a", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("America/New_York"));
+        ReviewEvents.Event point = new ReviewEvents.Event("reminder", nine, nine, false, false,
+                "Reminder", "", "Family", "Family", "");
+        ReviewEvents.Event range = new ReviewEvents.Event("practice", nine, nine + 3600000, false, false,
+                "Practice", "", "Family", "Family", "");
+        ReviewEvents.Event allDay = new ReviewEvents.Event("holiday", dayStart, dayEnd, true, false,
+                "Holiday", "", "Family", "Family", "");
+        if (!point.timeLabel(dayStart, dayEnd, format).equals("9:00 AM")
+                || !range.timeLabel(dayStart, dayEnd, format).equals("9:00 AM\n– 10:00 AM")
+                || !allDay.timeLabel(dayStart, dayEnd, format).equals("All day"))
+            throw new AssertionError("agenda time labels");
+    }
     public static void main(String[] args) {
+        checkAgendaTimes();
         ReviewEvents.Event family = event("family-copy", "Clemson @ Syracuse", "", "Family");
         ReviewEvents.Event sports = event("sports-feed", "Clemson @ Syracuse", "Stadium", "Football");
         List<ReviewEvents.Event> merged = ReviewEvents.combine(Arrays.asList(family, sports));

@@ -117,7 +117,7 @@ def event_record(event, zone, source):
         start_ms, end_ms = int(start.timestamp()*1000), int(end.timestamp()*1000)
     else:
         start_ms, end_ms = epoch(a["dateTime"]), epoch(b["dateTime"])
-    if end_ms <= start_ms:
+    if end_ms < start_ms or (all_day and end_ms == start_ms):
         raise ValueError("invalid_event_interval")
     identity = str(event.get("iCalUID") or event.get("id") or "") + ":" + str(start_ms)
     return {"key": hashlib.sha256(identity.encode()).hexdigest()[:24], "start": start_ms, "end": end_ms,
@@ -148,6 +148,9 @@ def busy_records(data, calendar_id, source):
 def calendars(config, old, now):
     zone = ZoneInfo(config.get("timezone", "America/New_York"))
     start, end = boundaries(now, zone)
+    start_ms = int(start.timestamp()*1000)
+    # Google uses an exclusive lower bound on end times. Include a point at midnight.
+    event_query_start = start.astimezone(UTC) - dt.timedelta(seconds=1)
     binary = config["gws"]
     current = pages(binary, "calendarList", {"maxResults": 250,
                     "fields": "items(id,summary,summaryOverride,primary,accessRole,backgroundColor,deleted),nextPageToken"})
@@ -170,11 +173,13 @@ def calendars(config, old, now):
                            "timeMax": end.isoformat(), "timeZone": str(zone), "items": [{"id": cid}]})
                 records = busy_records(data, cid, source)
             else:
-                raw = pages(binary, "events", {"calendarId": cid, "timeMin": start.isoformat(),
+                raw = pages(binary, "events", {"calendarId": cid, "timeMin": event_query_start.isoformat(),
                             "timeMax": end.isoformat(), "singleEvents": True, "orderBy": "startTime",
                             "showDeleted": False, "maxResults": 2500,
                             "fields": "items(id,iCalUID,summary,start,end,status,location,transparency,attendees(self,responseStatus)),nextPageToken"})
                 records = [record for event in raw if (record := event_record(event, zone, source))]
+                records = [record for record in records
+                           if record["end"] > start_ms or record["start"] == record["end"] == start_ms]
             source.update(events=records, fetchedAt=int(now.timestamp()*1000), error="")
         except (RuntimeError, ValueError, KeyError, TypeError, OSError):
             source.update(events=previous.get("events", []), fetchedAt=previous.get("fetchedAt", 0),
