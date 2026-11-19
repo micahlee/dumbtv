@@ -241,9 +241,12 @@ public final class DailyReview extends Activity {
         Ui.focusStyle(v, ACCENT, 0xFF1B2B43, dp(8));
         v.setOnClickListener(view -> click.run()); return v;
     }
-    private String fmt(long time, String pattern) {
+    private SimpleDateFormat formatter(String pattern) {
         SimpleDateFormat format = new SimpleDateFormat(pattern, Locale.US); format.setTimeZone(zone);
-        return format.format(new Date(time));
+        return format;
+    }
+    private String fmt(long time, String pattern) {
+        return formatter(pattern).format(new Date(time));
     }
     private long dayStart(long time) {
         Calendar calendar = Calendar.getInstance(zone); calendar.setTimeInMillis(time);
@@ -270,9 +273,6 @@ public final class DailyReview extends Activity {
             JSONObject row = array.optJSONObject(i); if (row != null) result.add(row);
         }
         return result;
-    }
-    private boolean overlaps(JSONObject event, long start, long end) {
-        return event.optLong("start") < end && event.optLong("end") > start;
     }
     private LinearLayout card() {
         LinearLayout box = column(); box.setPadding(dp(16), dp(14), dp(16), dp(14));
@@ -388,9 +388,12 @@ public final class DailyReview extends Activity {
             sourceCount++;
             boolean stale = System.currentTimeMillis()-source.optLong("fetchedAt") > 2*HOUR || !source.optString("error").isEmpty();
             if (stale) warnings.append(warnings.length() == 0 ? "Saved/unavailable: " : " · ").append(source.optString("label"));
-            for (JSONObject event : objects(source, "events")) if (overlaps(event, start, end)) {
-                raw.add(new ReviewEvents.Event(event.optString("key"), event.optLong("start"), event.optLong("end"),
-                        event.optBoolean("allDay"), event.optBoolean("busyOnly"), event.optString("title"),
+            for (JSONObject event : objects(source, "events")) {
+                long eventStart = event.optLong("start"), eventEnd = event.optLong("end");
+                boolean allDay = event.optBoolean("allDay");
+                if (!ReviewEvents.occursDuring(eventStart, eventEnd, allDay, start, end)) continue;
+                raw.add(new ReviewEvents.Event(event.optString("key"), eventStart, eventEnd,
+                        allDay, event.optBoolean("busyOnly"), event.optString("title"),
                         event.optString("location"), source.optString("key", source.optString("label")),
                         source.optString("label"), event.optString("color")));
             }
@@ -406,11 +409,11 @@ public final class DailyReview extends Activity {
         if (start < calendar.optLong("start") || end > calendar.optLong("end"))
             addLine(list, "Today has not been refreshed yet", 12, 0xFFFFCA83);
         if (events.isEmpty()) addLine(list, sourceCount == 0 ? "Calendar setup is pending on the mini" : "No saved events for today", 17, MUTED);
+        SimpleDateFormat timeFormat = formatter("h:mm a");
         for (ReviewEvents.Event event : events) {
             LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.TOP);
             row.setPadding(dp(12), dp(6), dp(12), dp(6)); row.setBackground(Ui.round(0xFF15233A, dp(8)));
-            String time = event.allDay ? "All day" : fmt(Math.max(start, event.start), "h:mm a")
-                    + "\n– " + fmt(Math.min(end, event.end), "h:mm a");
+            String time = event.timeLabel(start, end, timeFormat);
             int color = ACCENT;
             try { color = android.graphics.Color.parseColor(event.color); }
             catch (IllegalArgumentException ignored) { /* Provider color uses fallback. */ }

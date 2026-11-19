@@ -53,6 +53,39 @@ class DailyReviewTest(unittest.TestCase):
         for bad in ({}, {"calendars": {"fixture-work": {"busy": [], "errors": [{"reason": "notFound"}]}}}):
             with self.assertRaises(RuntimeError): review.busy_records(bad, "fixture-work", SOURCE)
 
+    def test_calendar_refresh_preserves_timed_events_at_a_single_instant(self):
+        def event(title, start, end):
+            return {"id": title, "summary": title, "start": {"dateTime": start}, "end": {"dateTime": end}}
+
+        midnight = "2026-11-03T00:00:00-05:00"
+        six = "2026-11-03T18:00:00-05:00"
+        events = [
+            event("Ends at midnight", "2026-11-02T23:00:00-05:00", midnight),
+            event("Midnight reminder", midnight, midnight),
+            event("Evening reminder", six, six),
+            event("Practice", six, "2026-11-03T19:00:00-05:00"),
+        ]
+        calendar = {"id": "family", "summary": "Family", "accessRole": "reader"}
+
+        def provider(_binary, resource, params):
+            if resource == "calendarList":
+                return [calendar]
+            lower = review.epoch(params["timeMin"])
+            return [item for item in events if review.epoch(item["end"]["dateTime"]) > lower]
+
+        with patch.object(review, "pages", side_effect=provider):
+            source = review.calendars({"gws": "fixture-gws"}, {}, NOW)["sources"][0]
+        self.assertEqual(source["error"], "")
+        self.assertEqual([item["title"] for item in source["events"]],
+                         ["Midnight reminder", "Evening reminder", "Practice"])
+        for item in source["events"][:2]:
+            self.assertEqual(item["start"], item["end"])
+
+        with self.assertRaisesRegex(ValueError, "invalid_event_interval"):
+            review.event_record(event("Reversed", six, midnight), ZONE, SOURCE)
+        with self.assertRaisesRegex(ValueError, "invalid_event_interval"):
+            review.event_record({"start": {"date": "2026-11-03"}, "end": {"date": "2026-11-03"}}, ZONE, SOURCE)
+
     def test_pagination_does_not_turn_an_incomplete_feed_into_success(self):
         with patch.object(review, "gws", side_effect=[{"items": [1], "nextPageToken": "a"}, {"items": [2]}]):
             self.assertEqual(review.pages("fixture", "events", {}), [1, 2])
